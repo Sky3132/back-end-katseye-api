@@ -1,0 +1,100 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model admin {
+  admin_id Int    @id @default(autoincrement())
+  username String @unique(map: "username") @db.VarChar(100)
+  password String @db.VarChar(255)
+}
+
+model cart {
+  cart_id Int  @id @default(autoincrement())
+  user_id Int? @unique(map: "Cart_user_id_key")
+
+  @@index([user_id], map: "user_id")
+}
+
+model cart_item {
+  cart_item_id Int @id @default(autoincrement())
+  cart_id      Int
+  product_id   Int
+  quantity     Int @default(1)
+
+  @@index([cart_id], map: "cart_id")
+  @@index([product_id], map: "product_id")
+}
+
+model category {
+  category_id   Int    @id @default(autoincrement())
+  category_name String @db.VarChar(100)
+}
+
+model order {
+  order_id     Int       @id @default(autoincrement())
+  order_date   DateTime? @default(now()) @db.DateTime(0)
+  total_amount Decimal   @db.Decimal(10, 2)
+  user_id      Int?
+
+  @@index([user_id], map: "user_id")
+}
+
+model order_item {
+  order_item_id Int     @id @default(autoincrement())
+  quantity      Int
+  subtotal      Decimal @db.Decimal(10, 2)
+  order_id      Int
+  product_id    Int
+
+  @@index([order_id], map: "order_id")
+  @@index([product_id], map: "product_id")
+}
+
+model product {
+  product_id   Int              @id @default(autoincrement())
+  product_name String           @db.VarChar(150)
+  title        String?          @db.VarChar(150)
+  description  String?          @db.VarChar(1000)
+  price        Decimal          @db.Decimal(10, 2)
+  stock        Int              @default(0)
+  category_id  Int?
+  created_at   DateTime         @default(now()) @db.DateTime(0)
+  updated_at   DateTime         @updatedAt @db.DateTime(0)
+  variants     product_variant[]
+
+  @@index([category_id], map: "category_id")
+}
+
+model product_variant {
+  variant_id  Int      @id @default(autoincrement())
+  product_id  Int
+  name        String   @db.VarChar(150)
+  sku         String?  @db.VarChar(120)
+  price       Decimal? @db.Decimal(10, 2)
+  stock       Int      @default(0)
+  created_at  DateTime @default(now()) @db.DateTime(0)
+  updated_at  DateTime @updatedAt @db.DateTime(0)
+  product     product  @relation(fields: [product_id], references: [product_id], onDelete: Cascade)
+
+  @@index([product_id], map: "product_id")
+}
+
+model user {
+  user_id  Int     @id @default(autoincrement())
+  name     String  @db.VarChar(150)
+  email    String  @unique(map: "email") @db.VarChar(150)
+  password String  @db.VarChar(255)
+  address  String? @db.Text
+}
+
+model notification {
+  notification_id Int      @id @default(autoincrement())
+  title           String   @db.VarChar(255)
+  details         String   @db.VarChar(1000)
+  time            DateTime @db.DateTime(0)
+  created_at      DateTime @default(now()) @db.DateTime(0)
+}
