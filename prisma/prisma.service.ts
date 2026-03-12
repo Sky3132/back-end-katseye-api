@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { PrismaMariaDb } from '@prisma/adapter-mariadb';
 import { config } from 'dotenv';
@@ -7,6 +7,8 @@ config(); // loads your .env
 
 @Injectable()
 export class PrismaService extends PrismaClient {
+  private readonly logger = new Logger(PrismaService.name);
+
   constructor() {
     super({
       adapter: new PrismaMariaDb({
@@ -18,6 +20,10 @@ export class PrismaService extends PrismaClient {
         connectionLimit: 5,
       }),
     });
+
+    this.logger.log(
+      `DB config: host=${process.env.DATABASE_HOST} port=${process.env.DATABASE_PORT} name=${process.env.DATABASE_NAME}`,
+    );
   }
   async onModuleInit() {
     await this.$connect();

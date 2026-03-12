@@ -1,4 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AddCartItemDto } from './dto/add-cart-item.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
@@ -8,15 +15,31 @@ export class CartService {
   constructor(private readonly prisma: PrismaService) {}
 
   async addItem(userId: number, dto: AddCartItemDto) {
-    const product = await this.prisma.product.findUnique({
-      where: { product_id: dto.product_id },
+    const product = await this.prisma.product.findFirst({
+      where: {
+        product_id: dto.product_id,
+      },
+      include: {
+        variants: {
+          select: { variant_id: true, stock: true },
+          orderBy: { variant_id: 'asc' },
+        },
+      },
     });
 
     if (!product) {
       throw new NotFoundException('Product not found.');
     }
 
-    if (product.stock < dto.quantity) {
+    const effectiveStock = product.variants.length
+      ? product.variants.reduce((sum, v) => sum + (v.stock ?? 0), 0)
+      : product.stock;
+
+    if (effectiveStock <= 0) {
+      throw new BadRequestException('Out of stock.');
+    }
+
+    if (effectiveStock < dto.quantity) {
       throw new BadRequestException('Insufficient stock.');
     }
 
@@ -30,7 +53,7 @@ export class CartService {
 
     if (existingItem) {
       const newQuantity = existingItem.quantity + dto.quantity;
-      if (product.stock < newQuantity) {
+      if (effectiveStock < newQuantity) {
         throw new BadRequestException('Insufficient stock for requested quantity.');
       }
 
@@ -52,10 +75,26 @@ export class CartService {
   async getItems(userId: number) {
     const cart = await this.getOrCreateCart(userId);
 
-    return this.prisma.cart_item.findMany({
+    const items = await this.prisma.cart_item.findMany({
       where: { cart_id: cart.cart_id },
+      include: {
+        product: true,
+      },
       orderBy: { cart_item_id: 'desc' },
     });
+
+    return items.map((item) => ({
+      id: item.cart_item_id,
+      product_id: item.product_id,
+      quantity: item.quantity,
+      product: {
+        id: item.product.product_id,
+        title: item.product.title ?? item.product.product_name,
+        imgsrc: item.product.imgsrc,
+        price: Number(item.product.price),
+        stock: item.product.stock,
+      },
+    }));
   }
 
   async updateItem(userId: number, cartItemId: number, dto: UpdateCartItemDto) {
@@ -69,13 +108,29 @@ export class CartService {
 
     await this.assertCartOwner(userId, item.cart_id);
 
-    const product = await this.prisma.product.findUnique({
-      where: { product_id: item.product_id },
+    const product = await this.prisma.product.findFirst({
+      where: {
+        product_id: item.product_id,
+      },
+      include: {
+        variants: {
+          select: { variant_id: true, stock: true },
+          orderBy: { variant_id: 'asc' },
+        },
+      },
     });
     if (!product) {
       throw new NotFoundException('Product not found.');
     }
-    if (product.stock < dto.quantity) {
+
+    const effectiveStock = product.variants.length
+      ? product.variants.reduce((sum, v) => sum + (v.stock ?? 0), 0)
+      : product.stock;
+
+    if (effectiveStock <= 0) {
+      throw new BadRequestException('Out of stock.');
+    }
+    if (effectiveStock < dto.quantity) {
       throw new BadRequestException('Insufficient stock.');
     }
 
@@ -113,7 +168,15 @@ export class CartService {
   }
 
   private async getOrCreateCart(userId: number) {
-    const existing = await this.prisma.cart.findFirst({
+    const user = await this.prisma.user.findUnique({
+      where: { user_id: userId },
+      select: { user_id: true },
+    });
+    if (!user) {
+      throw new UnauthorizedException('User not found.');
+    }
+
+    const existing = await this.prisma.cart.findUnique({
       where: { user_id: userId },
     });
 
@@ -121,9 +184,18 @@ export class CartService {
       return existing;
     }
 
-    return this.prisma.cart.create({
-      data: { user_id: userId },
-    });
+    try {
+      return await this.prisma.cart.create({
+        data: { user_id: userId },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError) {
+        if (err.code === 'P2003') {
+          throw new UnauthorizedException('User not found.');
+        }
+      }
+      throw err;
+    }
   }
 
   private async assertCartOwner(userId: number, cartId: number) {

@@ -10,7 +10,9 @@ import { AuthUser } from './auth-user.interface';
 @Injectable()
 export class AdminGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
-    const request = context.switchToHttp().getRequest<Request & { user?: AuthUser }>();
+    const request = context
+      .switchToHttp()
+      .getRequest<Request & { user?: AuthUser }>();
     const user = request.user;
 
     if (!user || user.role !== 'admin') {

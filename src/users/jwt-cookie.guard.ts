@@ -30,10 +30,16 @@ export class JwtCookieGuard implements CanActivate {
   }
 
   private extractToken(request: Request): string | null {
+    const cookies = (request as Request & { cookies?: Record<string, unknown> }).cookies;
+    const cookieToken = cookies?.auth_token;
+    if (typeof cookieToken === 'string' && cookieToken.trim()) {
+      return cookieToken.trim();
+    }
+
     const cookieHeader = request.headers.cookie;
     if (cookieHeader) {
-      const cookies = cookieHeader.split(';');
-      for (const part of cookies) {
+      const cookieParts = cookieHeader.split(';');
+      for (const part of cookieParts) {
         const [key, ...rest] = part.trim().split('=');
         if (key === 'auth_token') {
           return decodeURIComponent(rest.join('='));

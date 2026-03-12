@@ -8,9 +8,12 @@ import {
   Patch,
   Post,
   Put,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { AdminGuard } from '../../users/admin.guard';
+import { AuthUser } from '../../users/auth-user.interface';
 import { JwtCookieGuard } from '../../users/jwt-cookie.guard';
 import { AdminProductsService } from './admin-products.service';
 import { CreateAdminProductDto } from './dto/create-admin-product.dto';
@@ -25,8 +28,11 @@ export class AdminProductsController {
   constructor(private readonly adminProductsService: AdminProductsService) {}
 
   @Post()
-  create(@Body() dto: CreateAdminProductDto) {
-    return this.adminProductsService.create(dto);
+  create(
+    @Req() req: Request & { user?: AuthUser },
+    @Body() dto: CreateAdminProductDto,
+  ) {
+    return this.adminProductsService.create(this.getAdminId(req), dto);
   }
 
   @Get()
@@ -41,18 +47,24 @@ export class AdminProductsController {
 
   @Put(':id')
   update(
+    @Req() req: Request & { user?: AuthUser },
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAdminProductDto,
   ) {
-    return this.adminProductsService.update(id, dto);
+    return this.adminProductsService.update(this.getAdminId(req), id, dto);
   }
 
   @Patch(':id/stock')
   updateStock(
+    @Req() req: Request & { user?: AuthUser },
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateStockDto,
   ) {
-    return this.adminProductsService.updateStock(id, dto.stock);
+    return this.adminProductsService.updateStock(
+      this.getAdminId(req),
+      id,
+      dto.stock,
+    );
   }
 
   @Delete(':id')
@@ -62,28 +74,37 @@ export class AdminProductsController {
 
   @Post(':id/variants')
   addVariant(
+    @Req() req: Request & { user?: AuthUser },
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateProductVariantDto,
   ) {
-    return this.adminProductsService.addVariant(id, dto);
+    return this.adminProductsService.addVariant(this.getAdminId(req), id, dto);
   }
 
   @Put(':id/variants/:variantId')
   updateVariant(
+    @Req() req: Request & { user?: AuthUser },
     @Param('id', ParseIntPipe) id: number,
     @Param('variantId', ParseIntPipe) variantId: number,
     @Body() dto: UpdateProductVariantDto,
   ) {
-    return this.adminProductsService.updateVariant(id, variantId, dto);
+    return this.adminProductsService.updateVariant(
+      this.getAdminId(req),
+      id,
+      variantId,
+      dto,
+    );
   }
 
   @Patch(':id/variants/:variantId/stock')
   updateVariantStock(
+    @Req() req: Request & { user?: AuthUser },
     @Param('id', ParseIntPipe) id: number,
     @Param('variantId', ParseIntPipe) variantId: number,
     @Body() dto: UpdateStockDto,
   ) {
     return this.adminProductsService.updateVariantStock(
+      this.getAdminId(req),
       id,
       variantId,
       dto.stock,
@@ -96,5 +117,9 @@ export class AdminProductsController {
     @Param('variantId', ParseIntPipe) variantId: number,
   ) {
     return this.adminProductsService.removeVariant(id, variantId);
+  }
+
+  private getAdminId(req: Request & { user?: AuthUser }) {
+    return Number(req.user?.sub);
   }
 }

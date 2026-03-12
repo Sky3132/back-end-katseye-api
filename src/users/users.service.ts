@@ -1,46 +1,94 @@
 import {
+  BadRequestException,
   ConflictException,
-  InternalServerErrorException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
+import { PrismaService } from '../../prisma/prisma.service';
+import { hashPassword, isHashedPassword, verifyPassword } from '../common/password';
 import { LoginUserDto } from './dto/login-user.dto';
 import { RegisterUserDto } from './dto/register-user.dto';
-import { randomBytes } from 'crypto';
 import { TokenService } from './token.service';
 import { UserRole } from './user-role.type';
 
-type MockApiUser = {
-  id: string;
-  email: string;
-  name: string;
-  password: string;
-  role?: UserRole;
-};
-
 @Injectable()
 export class UsersService {
-  constructor(private readonly tokenService: TokenService) {}
-
-  private readonly mockApiUrl =
-    'https://69a9318232e2d46caf457de9.mockapi.io/api/users/users';
+  constructor(
+    private readonly tokenService: TokenService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async register(dto: RegisterUserDto) {
-    const users = await this.getAllUsers();
-    const existingUser = users.find((user) => user.email === dto.email);
+    const email = (dto.email ?? dto.username)?.trim().toLowerCase();
+    if (!email) {
+      throw new BadRequestException('Email is required.');
+    }
+
+    const roleInput = (dto.role ?? 'user').trim().toLowerCase();
+    const requestedRole: UserRole = roleInput === 'admin' ? 'admin' : 'user';
+
+    if (requestedRole === 'admin') {
+      const registrationKey = dto.adminCode?.trim();
+      const expectedKey = process.env.ADMIN_REGISTRATION_KEY;
+      if (!expectedKey || !registrationKey || registrationKey !== expectedKey) {
+        throw new UnauthorizedException('Invalid admin code');
+      }
+
+      const existingAdminCount = await this.prisma.admin.count();
+      if (existingAdminCount > 0) {
+        throw new ConflictException('Admin account already exists.');
+      }
+
+      const existingAdmin = await this.prisma.admin.findUnique({
+        where: { username: email },
+      });
+      if (existingAdmin) {
+        throw new ConflictException('Email is already registered.');
+      }
+
+      const password = await hashPassword(dto.password);
+      const createdAdmin = await this.prisma.admin.create({
+        data: {
+          username: email,
+          password,
+          role: 'admin',
+        },
+      });
+
+      return {
+        message: 'Admin registered successfully.',
+        user: {
+          id: String(createdAdmin.admin_id),
+          email: createdAdmin.username,
+          name: createdAdmin.username,
+          role: 'admin' as const,
+        },
+      };
+    }
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+    });
 
     if (existingUser) {
       throw new ConflictException('Email is already registered.');
     }
 
-    const defaultName = dto.email.split('@')[0] || 'user';
-    const createdUser = await this.createUser({
-      email: dto.email,
-      password: dto.password,
-      name: defaultName,
-      role: 'user',
-    });
+    const defaultName = email.split('@')[0] || 'user';
+    const password = await hashPassword(dto.password);
+      const createdUser = await this.prisma.user.create({
+        data: {
+          email,
+          password,
+          name: defaultName,
+          role: 'user',
+          carts: {
+            create: {},
+          },
+        },
+      });
 
     return {
       message: 'User registered successfully.',
@@ -49,104 +97,229 @@ export class UsersService {
   }
 
   async login(dto: LoginUserDto) {
-    const users = await this.getAllUsers();
-    const user = users.find((candidate) => candidate.email === dto.email);
+    const identifier = (dto.email ?? dto.username)?.trim().toLowerCase();
+    if (!identifier) {
+      throw new BadRequestException('Email is required.');
+    }
 
-    if (!user) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: identifier },
+    });
+
+    if (user) {
+      const ok = await verifyPassword(dto.password, user.password);
+      if (!ok) {
+        throw new UnauthorizedException('Invalid email or password.');
+      }
+
+      if (!isHashedPassword(user.password)) {
+        await this.prisma.user.update({
+          where: { user_id: user.user_id },
+          data: { password: await hashPassword(dto.password) },
+        });
+      }
+
+      const token = this.tokenService.sign({
+        sub: String(user.user_id),
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      });
+
+      return {
+        message: 'Login successful.',
+        user: this.toPublicUser(user),
+        token,
+      };
+    }
+
+    const allowedAdminUsername = process.env.ADMIN_USERNAME?.trim().toLowerCase();
+    if (allowedAdminUsername && identifier !== allowedAdminUsername) {
       throw new UnauthorizedException('Invalid email or password.');
     }
 
-    if (dto.password !== user.password) {
+    const admin = await this.prisma.admin.findUnique({
+      where: { username: identifier },
+    });
+
+    const ok = admin ? await verifyPassword(dto.password, admin.password) : false;
+    if (!admin || !ok) {
       throw new UnauthorizedException('Invalid email or password.');
+    }
+
+    if (!isHashedPassword(admin.password)) {
+      await this.prisma.admin.update({
+        where: { admin_id: admin.admin_id },
+        data: { password: await hashPassword(dto.password) },
+      });
     }
 
     const token = this.tokenService.sign({
-      sub: user.id,
-      email: user.email,
-      role: this.resolveRole(user),
+      sub: String(admin.admin_id),
+      email: admin.username,
+      name: admin.username,
+      role: 'admin',
     });
 
     return {
       message: 'Login successful.',
-      user: this.toPublicUser(user),
+      user: {
+        id: String(admin.admin_id),
+        email: admin.username,
+        name: admin.username,
+        role: 'admin' as const,
+      },
       token,
     };
   }
 
   async getAllUsers() {
-    return this.request<MockApiUser[]>('');
+    const users = await this.prisma.user.findMany({
+      orderBy: { user_id: 'desc' },
+    });
+
+    return users.map((user) => this.toPublicUser(user));
   }
 
-  async createUser(user: Omit<MockApiUser, 'id'>) {
-    return this.request<MockApiUser>('', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(user),
-    });
+  getCurrentUser(authUser: {
+    sub: string;
+    email: string;
+    name?: string;
+    role: UserRole;
+  }) {
+    return {
+      id: authUser.sub,
+      email: authUser.email,
+      name: authUser.name ?? authUser.email.split('@')[0] ?? 'user',
+      role: authUser.role,
+    };
   }
 
-  async updateUser(id: string, payload: Partial<Omit<MockApiUser, 'id'>>) {
-    return this.request<MockApiUser>(`/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+  async createUser(user: { name: string; email: string; password: string }) {
+    const email = user.email.trim().toLowerCase();
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
     });
+
+    if (existingUser) {
+      throw new ConflictException('Email is already registered.');
+    }
+
+    const createdUser = await this.prisma.user.create({
+      data: {
+        name: user.name,
+        email,
+        password: await hashPassword(user.password),
+        role: 'user',
+        carts: {
+          create: {},
+        },
+      },
+    });
+
+    return this.toPublicUser(createdUser);
+  }
+
+  async updateUser(
+    id: string,
+    payload: { name?: string; email?: string; password?: string },
+  ) {
+    const userId = this.parseUserId(id);
+    await this.findUserById(userId);
+
+    if (payload.email) {
+      const email = payload.email.trim().toLowerCase();
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email },
+      });
+
+      if (existingUser && existingUser.user_id !== userId) {
+        throw new ConflictException('Email is already registered.');
+      }
+    }
+
+    const updatedUser = await this.prisma.user.update({
+      where: { user_id: userId },
+      data: {
+        name: payload.name,
+        email: payload.email?.trim().toLowerCase(),
+        password: payload.password ? await hashPassword(payload.password) : undefined,
+      },
+    });
+
+    return this.toPublicUser(updatedUser);
   }
 
   async deleteUser(id: string) {
-    return this.request<MockApiUser>(`/${id}`, {
-      method: 'DELETE',
+    const userId = this.parseUserId(id);
+    await this.findUserById(userId);
+
+    await this.prisma.user.delete({
+      where: { user_id: userId },
     });
+
+    return { message: 'User deleted successfully.' };
   }
 
   async generateSampleUsers(total = 10) {
-    const users: MockApiUser[] = [];
+    const users: Array<{
+      id: string;
+      email: string;
+      name: string;
+      role: UserRole;
+    }> = [];
 
     for (let i = 0; i < total; i++) {
       const suffix = randomBytes(3).toString('hex');
-      const user = await this.createUser({
-        name: `Sample User ${i + 1}`,
-        email: `sample_${suffix}_${i + 1}@example.com`,
-        password: '123456',
+      const user = await this.prisma.user.create({
+        data: {
+          name: `Sample User ${i + 1}`,
+          email: `sample_${suffix}_${i + 1}@example.com`,
+          password: await hashPassword('123456'),
+          role: 'user',
+          carts: {
+            create: {},
+          },
+        },
       });
-      users.push(user);
+      users.push(this.toPublicUser(user));
     }
 
     return users;
   }
 
-  private toPublicUser(user: MockApiUser) {
+  private toPublicUser(user: {
+    user_id: number;
+    email: string;
+    name: string;
+    role: UserRole;
+  }) {
     return {
-      id: user.id,
+      id: String(user.user_id),
       email: user.email,
       name: user.name,
-      role: this.resolveRole(user),
+      role: user.role,
     };
   }
 
-  private resolveRole(user: MockApiUser): UserRole {
-    return user.role === 'admin' ? 'admin' : 'user';
-  }
-
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    let response: Response;
-
-    try {
-      response = await fetch(`${this.mockApiUrl}${path}`, init);
-    } catch {
-      throw new InternalServerErrorException('Failed to reach user API.');
-    }
-
-    if (response.status === 404) {
+  private parseUserId(id: string) {
+    const userId = Number(id);
+    if (!Number.isInteger(userId) || userId <= 0) {
       throw new NotFoundException('User not found.');
     }
 
-    if (!response.ok) {
-      throw new InternalServerErrorException(
-        `User API request failed with status ${response.status}.`,
-      );
+    return userId;
+  }
+
+  private async findUserById(userId: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { user_id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found.');
     }
 
-    return (await response.json()) as T;
+    return user;
   }
 }

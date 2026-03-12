@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { AuthUser } from './auth-user.interface';
+import { AUTH_TOKEN_EXPIRES_IN_SECONDS } from './auth.constants';
 import { UserRole } from './user-role.type';
 
 type TokenPayload = AuthUser;
@@ -10,13 +11,14 @@ export class TokenService {
   private readonly secret = process.env.JWT_SECRET || 'dev_jwt_secret_change_me';
 
   sign(
-    data: { sub: string; email: string; role: UserRole },
-    expiresInSeconds = 60 * 60,
+    data: { sub: string; email: string; name?: string; role: UserRole },
+    expiresInSeconds = AUTH_TOKEN_EXPIRES_IN_SECONDS,
   ): string {
     const now = Math.floor(Date.now() / 1000);
     const payload: TokenPayload = {
       sub: data.sub,
       email: data.email,
+      name: data.name,
       role: data.role,
       iat: now,
       exp: now + expiresInSeconds,
@@ -28,7 +30,7 @@ export class TokenService {
     const body = this.base64UrlEncode(JSON.stringify(payload));
     const signature = this.signPart(`${header}.${body}`);
     return `${header}.${body}.${signature}`;
-  }
+}
 
   verify(token: string): TokenPayload | null {
     const parts = token.split('.');

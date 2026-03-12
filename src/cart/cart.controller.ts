@@ -13,12 +13,13 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtCookieGuard } from '../users/jwt-cookie.guard';
+import { UserGuard } from '../users/user.guard';
 import { CartService } from './cart.service';
 import { AddCartItemDto } from './dto/add-cart-item.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
 
 @Controller('cart')
-@UseGuards(JwtCookieGuard)
+@UseGuards(JwtCookieGuard, UserGuard)
 export class CartController {
   constructor(private readonly cartService: CartService) {}
 

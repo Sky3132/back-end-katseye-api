@@ -6,17 +6,60 @@ datasource db {
   provider = "mysql"
 }
 
+enum UserRole {
+  user
+  admin
+}
+
 model admin {
   admin_id Int    @id @default(autoincrement())
-  username String @unique(map: "username") @db.VarChar(100)
+  username String @unique @db.VarChar(100)
   password String @db.VarChar(255)
+  role     UserRole @default(admin)
+
+  products       product[]
+  inventory_logs inventory_log[]
+}
+
+model user {
+  user_id  Int    @id @default(autoincrement())
+  name     String @db.VarChar(150)
+  email    String @unique @db.VarChar(150)
+  password String @db.VarChar(255)
+  role     UserRole @default(user)
+
+  carts     cart[]
+  orders    order[]
+  addresses address[]
+}
+
+model address {
+  address_id Int    @id @default(autoincrement())
+  user_id    Int
+  full_name  String? @db.VarChar(150)
+  email      String? @db.VarChar(150)
+  region     String? @db.VarChar(100)
+  street     String @db.VarChar(255)
+  city       String @db.VarChar(100)
+  province   String @db.VarChar(100)
+  barangay   String? @db.VarChar(100)
+  zip_code   String @db.VarChar(20)
+  country    String @db.VarChar(100)
+
+  user   user    @relation(fields: [user_id], references: [user_id], onDelete: Cascade, map: "address_user_id_fkey")
+  orders order[]
+
+  @@index([user_id], map: "address_user_id_idx")
 }
 
 model cart {
-  cart_id Int  @id @default(autoincrement())
-  user_id Int? @unique(map: "Cart_user_id_key")
+  cart_id Int @id @default(autoincrement())
+  user_id Int
 
-  @@index([user_id], map: "user_id")
+  user       user        @relation(fields: [user_id], references: [user_id], onDelete: Cascade, map: "cart_user_id_fkey")
+  cart_items cart_item[]
+
+  @@unique([user_id])
 }
 
 model cart_item {
@@ -25,76 +68,161 @@ model cart_item {
   product_id   Int
   quantity     Int @default(1)
 
-  @@index([cart_id], map: "cart_id")
-  @@index([product_id], map: "product_id")
+  cart    cart    @relation(fields: [cart_id], references: [cart_id], onDelete: Cascade, map: "cart_item_cart_id_fkey")
+  product product @relation(fields: [product_id], references: [product_id], map: "cart_item_product_id_fkey")
+
+  @@index([cart_id], map: "cart_item_cart_id_idx")
+  @@index([product_id], map: "cart_item_product_id_idx")
 }
 
 model category {
   category_id   Int    @id @default(autoincrement())
   category_name String @db.VarChar(100)
+
+  parent_category_id Int?
+  parent             category?  @relation("category_parent", fields: [parent_category_id], references: [category_id])
+  children           category[] @relation("category_parent")
+
+  products product[]
+
+  @@index([parent_category_id])
+}
+
+model product {
+  product_id   Int     @id @default(autoincrement())
+  product_name String  @db.VarChar(150)
+  title        String? @db.VarChar(150)
+  description  String? @db.VarChar(1000)
+  imgsrc       String? @db.VarChar(1000)
+  image_url    String? @db.VarChar(1000)
+  images       String? @db.LongText
+  price        Decimal @db.Decimal(10, 2)
+  stock        Int     @default(0)
+
+  admin_id    Int
+  category_id Int?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  admin    admin     @relation(fields: [admin_id], references: [admin_id], map: "product_admin_id_fkey")
+  category category? @relation(fields: [category_id], references: [category_id], map: "product_category_id_fkey")
+
+  variants       product_variant[]
+  cart_items     cart_item[]
+  order_items    order_item[]
+  inventory_logs inventory_log[] // ADD THIS
+
+  @@index([admin_id], map: "product_admin_id_fkey")
+  @@index([category_id], map: "product_category_id_fkey")
+}
+
+model inventory_log {
+  inventory_id Int      @id @default(autoincrement())
+  product_id   Int
+  admin_id     Int
+  change_qty   Int
+  action       String   @db.VarChar(50)
+  created_at   DateTime @default(now())
+
+  product product @relation(fields: [product_id], references: [product_id], onDelete: Cascade, map: "inventory_log_product_id_fkey")
+  admin   admin   @relation(fields: [admin_id], references: [admin_id], map: "inventory_log_admin_id_fkey")
+
+  @@index([product_id], map: "inventory_log_product_id_idx")
+  @@index([admin_id], map: "inventory_log_admin_id_idx")
+}
+
+model product_variant {    
+  variant_id Int      @id @default(autoincrement())
+  product_id Int
+  name       String   @db.VarChar(150)
+  sku        String?  @db.VarChar(120)
+  price      Decimal? @db.Decimal(10, 2)
+  stock      Int      @default(0)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  product product @relation(fields: [product_id], references: [product_id], onDelete: Cascade, map: "product_variant_product_id_fkey")
+
+  @@index([product_id])
 }
 
 model order {
-  order_id     Int       @id @default(autoincrement())
-  order_date   DateTime? @default(now()) @db.DateTime(0)
-  total_amount Decimal   @db.Decimal(10, 2)
-  user_id      Int?
+  order_id       Int      @id @default(autoincrement())
+  user_id        Int
+  address_id     Int
+  order_date     DateTime @default(now())
+  payment_method String   @db.VarChar(100)
+  total_amount   Decimal  @db.Decimal(10, 2)
+  status         String   @default("pending")
 
-  @@index([user_id], map: "user_id")
+  user        user         @relation(fields: [user_id], references: [user_id], onDelete: Cascade, map: "order_user_id_fkey")
+  address     address      @relation(fields: [address_id], references: [address_id], map: "order_address_id_fkey")
+  order_items order_item[]
+  shipment    shipment? // ADD THIS
+
+  @@index([user_id], map: "order_user_id_idx")
+  @@index([address_id], map: "order_address_id_idx")
 }
 
 model order_item {
   order_item_id Int     @id @default(autoincrement())
-  quantity      Int
-  subtotal      Decimal @db.Decimal(10, 2)
   order_id      Int
   product_id    Int
+  quantity      Int
+  subtotal      Decimal @db.Decimal(10, 2)
 
-  @@index([order_id], map: "order_id")
-  @@index([product_id], map: "product_id")
-}
+  order   order   @relation(fields: [order_id], references: [order_id], onDelete: Cascade, map: "order_item_order_id_fkey")
+  product product @relation(fields: [product_id], references: [product_id], map: "order_item_product_id_fkey")
 
-model product {
-  product_id   Int              @id @default(autoincrement())
-  product_name String           @db.VarChar(150)
-  title        String?          @db.VarChar(150)
-  description  String?          @db.VarChar(1000)
-  price        Decimal          @db.Decimal(10, 2)
-  stock        Int              @default(0)
-  category_id  Int?
-  created_at   DateTime         @default(now()) @db.DateTime(0)
-  updated_at   DateTime         @updatedAt @db.DateTime(0)
-  variants     product_variant[]
-
-  @@index([category_id], map: "category_id")
-}
-
-model product_variant {
-  variant_id  Int      @id @default(autoincrement())
-  product_id  Int
-  name        String   @db.VarChar(150)
-  sku         String?  @db.VarChar(120)
-  price       Decimal? @db.Decimal(10, 2)
-  stock       Int      @default(0)
-  created_at  DateTime @default(now()) @db.DateTime(0)
-  updated_at  DateTime @updatedAt @db.DateTime(0)
-  product     product  @relation(fields: [product_id], references: [product_id], onDelete: Cascade)
-
-  @@index([product_id], map: "product_id")
-}
-
-model user {
-  user_id  Int     @id @default(autoincrement())
-  name     String  @db.VarChar(150)
-  email    String  @unique(map: "email") @db.VarChar(150)
-  password String  @db.VarChar(255)
-  address  String? @db.Text
+  @@index([order_id], map: "order_item_order_id_idx")
+  @@index([product_id], map: "order_item_product_id_idx")
 }
 
 model notification {
   notification_id Int      @id @default(autoincrement())
   title           String   @db.VarChar(255)
   details         String   @db.VarChar(1000)
-  time            DateTime @db.DateTime(0)
-  created_at      DateTime @default(now()) @db.DateTime(0)
+  time            DateTime
+  created_at      DateTime @default(now())
+}
+
+model shipment {
+  shipment_id     Int     @id @default(autoincrement())
+  order_id        Int     @unique
+  courier         String  @db.VarChar(100)
+  tracking_number String? @db.VarChar(150)
+  shipping_fee    Decimal @db.Decimal(10, 2)
+
+  status       String    @default("processing")
+  shipped_at   DateTime?
+  delivered_at DateTime?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  order order @relation(fields: [order_id], references: [order_id], onDelete: Cascade, map: "shipment_order_id_fkey")
+  parcel_tracking parcel_tracking?
+
+  @@index([order_id], map: "shipment_order_id_idx")
+}
+
+model parcel_tracking {
+  parcel_tracking_id Int      @id @default(autoincrement())
+  order_id           Int      @unique
+  token              String   @unique @db.VarChar(80)
+
+  customer_email     String   @db.VarChar(150)
+  destination_address String  @db.VarChar(500)
+  destination_lat    Decimal? @db.Decimal(10, 7)
+  destination_lng    Decimal? @db.Decimal(10, 7)
+  eta_date           DateTime?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  shipment shipment @relation(fields: [order_id], references: [order_id], onDelete: Cascade, map: "parcel_tracking_order_id_fkey")
+
+  @@index([order_id], map: "parcel_tracking_order_id_idx")
+  @@index([token], map: "parcel_tracking_token_idx")
 }
