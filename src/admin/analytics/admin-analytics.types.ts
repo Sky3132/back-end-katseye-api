@@ -20,4 +20,3 @@ export type MostSoldResponse = {
   best_seller: MostSoldProductRow | null;
   items: MostSoldProductRow[];
 };
-

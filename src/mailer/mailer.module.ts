@@ -6,4 +6,3 @@ import { MailerService } from './mailer.service';
   exports: [MailerService],
 })
 export class MailerModule {}
-

@@ -1,4 +1,14 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { AdminGuard } from '../../users/admin.guard';
 import { JwtCookieGuard } from '../../users/jwt-cookie.guard';
 import { AdminCategoriesService } from './admin-categories.service';
@@ -8,11 +18,18 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 @Controller('admin/categories')
 @UseGuards(JwtCookieGuard, AdminGuard)
 export class AdminCategoriesController {
-  constructor(private readonly adminCategoriesService: AdminCategoriesService) {}
+  constructor(
+    private readonly adminCategoriesService: AdminCategoriesService,
+  ) {}
 
   @Get('tree')
   getTree() {
     return this.adminCategoriesService.getTree();
+  }
+
+  @Get(':id/subcategories')
+  listSubcategories(@Param('id', ParseIntPipe) id: number) {
+    return this.adminCategoriesService.listSubcategories(id);
   }
 
   @Get()

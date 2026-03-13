@@ -16,7 +16,9 @@ async function bootstrap() {
 
   app.use('/uploads', express.static(join(process.cwd(), 'uploads')));
 
-  const allowedOrigins = (process.env.FRONTEND_ORIGIN ?? 'http://localhost:3000')
+  const allowedOrigins = (
+    process.env.FRONTEND_ORIGIN ?? 'http://localhost:3000'
+  )
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);

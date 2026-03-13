@@ -21,7 +21,8 @@ export class AdminDashboardController {
   @Get('stocks')
   getCurrentStocks(@Query('lowThreshold') lowThreshold?: string) {
     const parsed = Number(lowThreshold);
-    const threshold = Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+    const threshold =
+      Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
     return this.adminDashboardService.getCurrentStocks(threshold);
   }
 }

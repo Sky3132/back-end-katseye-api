@@ -28,7 +28,10 @@ export class AdminReportsService {
     take?: number;
     skip?: number;
   }) {
-    const { fromDate, toDateExclusive } = this.parseRange(params?.from, params?.to);
+    const { fromDate, toDateExclusive } = this.parseRange(
+      params?.from,
+      params?.to,
+    );
     const statuses = this.normalizeStatuses(params?.statuses);
 
     const take = params?.take;
@@ -60,7 +63,10 @@ export class AdminReportsService {
 
     const rows: SalesReportRow[] = orders.map((order) => {
       const itemsCount = order.order_items.length;
-      const unitsSold = order.order_items.reduce((sum, item) => sum + item.quantity, 0);
+      const unitsSold = order.order_items.reduce(
+        (sum, item) => sum + item.quantity,
+        0,
+      );
       return {
         id: order.order_id,
         order_number: this.toOrderNumber(order.order_id),
@@ -83,17 +89,27 @@ export class AdminReportsService {
       { total_orders: 0, total_sales: 0, total_units: 0 },
     );
 
-    const byDayMap = new Map<string, { date: string; totalSales: number; orders: number; units: number }>();
+    const byDayMap = new Map<
+      string,
+      { date: string; totalSales: number; orders: number; units: number }
+    >();
     for (const row of rows) {
       const date = row.order_date.toISOString().slice(0, 10);
-      const current = byDayMap.get(date) ?? { date, totalSales: 0, orders: 0, units: 0 };
+      const current = byDayMap.get(date) ?? {
+        date,
+        totalSales: 0,
+        orders: 0,
+        units: 0,
+      };
       current.totalSales += row.total_amount;
       current.orders += 1;
       current.units += row.units_sold;
       byDayMap.set(date, current);
     }
 
-    const by_day = [...byDayMap.values()].sort((a, b) => a.date.localeCompare(b.date));
+    const by_day = [...byDayMap.values()].sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
 
     return {
       range: {
@@ -105,7 +121,9 @@ export class AdminReportsService {
         total_orders: totals.total_orders,
         total_sales: totals.total_sales,
         total_units: totals.total_units,
-        avg_order_value: totals.total_orders ? totals.total_sales / totals.total_orders : 0,
+        avg_order_value: totals.total_orders
+          ? totals.total_sales / totals.total_orders
+          : 0,
       },
       by_day,
       orders: rows,
@@ -191,7 +209,9 @@ export class AdminReportsService {
       : new Date(trimmed);
 
     if (Number.isNaN(date.getTime())) {
-      throw new BadRequestException(`${field} must be a valid date (YYYY-MM-DD or ISO string).`);
+      throw new BadRequestException(
+        `${field} must be a valid date (YYYY-MM-DD or ISO string).`,
+      );
     }
 
     return date;
@@ -233,4 +253,3 @@ export class AdminReportsService {
     return `ORD-${10000 + orderId}`;
   }
 }
-

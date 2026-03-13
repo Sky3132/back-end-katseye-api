@@ -9,4 +9,3 @@ import { ParcelTrackingService } from './parcel-tracking.service';
   exports: [ParcelTrackingService],
 })
 export class ParcelTrackingModule {}
-

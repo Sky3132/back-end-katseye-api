@@ -80,4 +80,17 @@ export class UpdateAdminProductDto {
   @IsInt()
   @Min(1)
   category_id?: number;
+
+  // New (preferred): send main + sub separately; backend enforces pairing.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  main_category_id?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  subcategory_id?: number | null;
 }

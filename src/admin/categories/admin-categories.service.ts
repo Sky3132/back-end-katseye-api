@@ -58,6 +58,29 @@ export class AdminCategoriesService {
     }
   }
 
+  async listSubcategories(parentCategoryId: number) {
+    const parent = await this.ensureCategory(parentCategoryId);
+    if (parent.category_name.trim().toLowerCase() === 'album') {
+      return [];
+    }
+
+    try {
+      const categories = await this.prisma.category.findMany({
+        where: { parent_category_id: parentCategoryId },
+        orderBy: { category_name: 'asc' },
+      });
+
+      return categories.map((c) => ({
+        id: c.category_id,
+        category_name: c.category_name,
+        parent_category_id: c.parent_category_id ?? null,
+      }));
+    } catch (err) {
+      this.throwIfMissingParentCategoryColumn(err);
+      throw err;
+    }
+  }
+
   async create(dto: CreateCategoryDto) {
     const name = dto.category_name.trim();
     if (!name) {
@@ -65,7 +88,10 @@ export class AdminCategoriesService {
     }
 
     if (dto.parent_category_id != null) {
-      await this.ensureCategory(dto.parent_category_id);
+      const parent = await this.ensureCategory(dto.parent_category_id);
+      if (parent.category_name.trim().toLowerCase() === 'album') {
+        throw new BadRequestException('Album cannot have subcategories.');
+      }
     }
 
     let created;
@@ -101,7 +127,10 @@ export class AdminCategoriesService {
       if (dto.parent_category_id === categoryId) {
         throw new BadRequestException('parent_category_id cannot be itself.');
       }
-      await this.ensureCategory(dto.parent_category_id);
+      const parent = await this.ensureCategory(dto.parent_category_id);
+      if (parent.category_name.trim().toLowerCase() === 'album') {
+        throw new BadRequestException('Album cannot have subcategories.');
+      }
     }
 
     let updated;
@@ -171,7 +200,10 @@ export class AdminCategoriesService {
 
   private throwIfMissingParentCategoryColumn(err: unknown): never | void {
     const e = err as { code?: string; meta?: { column?: string } };
-    if (e?.code === 'P2022' && e?.meta?.column?.includes('parent_category_id')) {
+    if (
+      e?.code === 'P2022' &&
+      e?.meta?.column?.includes('parent_category_id')
+    ) {
       throw new ServiceUnavailableException(
         'Database is missing category.parent_category_id. Run Prisma migration to add it.',
       );

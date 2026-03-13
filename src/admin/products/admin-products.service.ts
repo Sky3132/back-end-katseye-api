@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { product, product_variant } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CreateAdminProductDto } from './dto/create-admin-product.dto';
@@ -66,9 +70,8 @@ export class AdminProductsService {
 
   async create(adminId: number, dto: CreateAdminProductDto) {
     await this.findAdmin(adminId);
-    if (dto.category_id != null) {
-      await this.ensureCategory(dto.category_id);
-    }
+
+    const categoryId = await this.resolveProductCategoryId(dto);
 
     const title = dto.title ?? dto.product_name;
     const stock = dto.stock ?? dto.current_stock ?? 0;
@@ -91,7 +94,7 @@ export class AdminProductsService {
         price: dto.price,
         stock,
         admin_id: adminId,
-        category_id: dto.category_id ?? null,
+        category_id: categoryId,
       },
     });
 
@@ -106,7 +109,10 @@ export class AdminProductsService {
         })),
       });
 
-      const total = dto.variants.reduce((sum, variant) => sum + (variant.stock ?? 0), 0);
+      const total = dto.variants.reduce(
+        (sum, variant) => sum + (variant.stock ?? 0),
+        0,
+      );
       await this.prisma.product.update({
         where: { product_id: created.product_id },
         data: { stock: total },
@@ -126,8 +132,9 @@ export class AdminProductsService {
   }
 
   findAll() {
-    return this.findManyProducts()
-      .then((products) => products.map((product) => this.toFrontendProduct(product)));
+    return this.findManyProducts().then((products) =>
+      products.map((product) => this.toFrontendProduct(product)),
+    );
   }
 
   async findOne(productId: number) {
@@ -181,9 +188,13 @@ export class AdminProductsService {
   async update(adminId: number, productId: number, dto: UpdateAdminProductDto) {
     await this.findAdmin(adminId);
     const existing = await this.findProductRecord(productId);
-    if (dto.category_id != null) {
-      await this.ensureCategory(dto.category_id);
-    }
+
+    const nextCategoryId =
+      dto.category_id == null &&
+      dto.main_category_id == null &&
+      dto.subcategory_id == null
+        ? undefined
+        : await this.resolveProductCategoryId(dto);
 
     const title = dto.title ?? dto.product_name;
     const stock = dto.stock ?? dto.current_stock;
@@ -218,7 +229,7 @@ export class AdminProductsService {
         images: nextImagesJson,
         price: dto.price,
         stock,
-        category_id: dto.category_id ?? undefined,
+        category_id: nextCategoryId,
       },
     });
 
@@ -452,6 +463,49 @@ export class AdminProductsService {
     return category;
   }
 
+  private isAlbumCategoryName(name: string) {
+    return name.trim().toLowerCase() === 'album';
+  }
+
+  private async resolveProductCategoryId(dto: {
+    category_id?: number;
+    main_category_id?: number;
+    subcategory_id?: number | null;
+  }): Promise<number | null> {
+    // Backward compatible: if caller still sends only category_id, keep it.
+    if (dto.main_category_id == null) {
+      if (dto.category_id == null) return null;
+      await this.ensureCategory(dto.category_id);
+      return dto.category_id;
+    }
+
+    const main = await this.ensureCategory(dto.main_category_id);
+    if (main.parent_category_id != null) {
+      throw new BadRequestException(
+        'main_category_id must be a top-level category.',
+      );
+    }
+
+    // Album never has subcategories: force storing Album itself as category_id.
+    if (this.isAlbumCategoryName(main.category_name)) {
+      return main.category_id;
+    }
+
+    const subId = dto.subcategory_id ?? null;
+    if (subId == null) {
+      return main.category_id;
+    }
+
+    const sub = await this.ensureCategory(subId);
+    if (sub.parent_category_id !== main.category_id) {
+      throw new BadRequestException(
+        'subcategory_id must be a child of main_category_id.',
+      );
+    }
+
+    return sub.category_id;
+  }
+
   private toFrontendProduct(
     product: product & {
       category?: {
@@ -463,6 +517,20 @@ export class AdminProductsService {
       variants?: product_variant[];
     },
   ) {
+    const mainCategoryId = product.category
+      ? (product.category.parent?.category_id ?? product.category.category_id)
+      : null;
+    const mainCategoryName = product.category
+      ? (product.category.parent?.category_name ??
+        product.category.category_name)
+      : null;
+    const subCategoryId = product.category?.parent
+      ? product.category.category_id
+      : null;
+    const subCategoryName = product.category?.parent
+      ? product.category.category_name
+      : null;
+
     return {
       id: product.product_id,
       title: product.title ?? product.product_name,
@@ -478,6 +546,10 @@ export class AdminProductsService {
       category_name: product.category?.category_name ?? null,
       parent_category_id: product.category?.parent_category_id ?? null,
       parent_category_name: product.category?.parent?.category_name ?? null,
+      main_category_id: mainCategoryId,
+      main_category_name: mainCategoryName,
+      subcategory_id: subCategoryId,
+      subcategory_name: subCategoryName,
       category: product.category
         ? {
             id: product.category.category_id,
@@ -541,6 +613,8 @@ export class AdminProductsService {
 
   private isMissingParentCategoryColumn(err: unknown) {
     const e = err as { code?: string; meta?: { column?: string } };
-    return e?.code === 'P2022' && e?.meta?.column?.includes('parent_category_id');
+    return (
+      e?.code === 'P2022' && e?.meta?.column?.includes('parent_category_id')
+    );
   }
 }

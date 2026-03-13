@@ -22,7 +22,9 @@ export class JwtCookieGuard implements CanActivate {
 
     const payload = this.tokenService.verify(token);
     if (!payload) {
-      throw new UnauthorizedException('Invalid or expired authentication token.');
+      throw new UnauthorizedException(
+        'Invalid or expired authentication token.',
+      );
     }
 
     (request as Request & { user?: AuthUser }).user = payload;
@@ -30,7 +32,8 @@ export class JwtCookieGuard implements CanActivate {
   }
 
   private extractToken(request: Request): string | null {
-    const cookies = (request as Request & { cookies?: Record<string, unknown> }).cookies;
+    const cookies = (request as Request & { cookies?: Record<string, unknown> })
+      .cookies;
     const cookieToken = cookies?.auth_token;
     if (typeof cookieToken === 'string' && cookieToken.trim()) {
       return cookieToken.trim();

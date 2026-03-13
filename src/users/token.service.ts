@@ -8,7 +8,8 @@ type TokenPayload = AuthUser;
 
 @Injectable()
 export class TokenService {
-  private readonly secret = process.env.JWT_SECRET || 'dev_jwt_secret_change_me';
+  private readonly secret =
+    process.env.JWT_SECRET || 'dev_jwt_secret_change_me';
 
   sign(
     data: { sub: string; email: string; name?: string; role: UserRole },
@@ -30,7 +31,7 @@ export class TokenService {
     const body = this.base64UrlEncode(JSON.stringify(payload));
     const signature = this.signPart(`${header}.${body}`);
     return `${header}.${body}.${signature}`;
-}
+  }
 
   verify(token: string): TokenPayload | null {
     const parts = token.split('.');

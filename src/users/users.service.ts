@@ -7,7 +7,11 @@ import {
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { hashPassword, isHashedPassword, verifyPassword } from '../common/password';
+import {
+  hashPassword,
+  isHashedPassword,
+  verifyPassword,
+} from '../common/password';
 import { LoginUserDto } from './dto/login-user.dto';
 import { RegisterUserDto } from './dto/register-user.dto';
 import { TokenService } from './token.service';
@@ -78,17 +82,17 @@ export class UsersService {
 
     const defaultName = email.split('@')[0] || 'user';
     const password = await hashPassword(dto.password);
-      const createdUser = await this.prisma.user.create({
-        data: {
-          email,
-          password,
-          name: defaultName,
-          role: 'user',
-          carts: {
-            create: {},
-          },
+    const createdUser = await this.prisma.user.create({
+      data: {
+        email,
+        password,
+        name: defaultName,
+        role: 'user',
+        carts: {
+          create: {},
         },
-      });
+      },
+    });
 
     return {
       message: 'User registered successfully.',
@@ -133,7 +137,8 @@ export class UsersService {
       };
     }
 
-    const allowedAdminUsername = process.env.ADMIN_USERNAME?.trim().toLowerCase();
+    const allowedAdminUsername =
+      process.env.ADMIN_USERNAME?.trim().toLowerCase();
     if (allowedAdminUsername && identifier !== allowedAdminUsername) {
       throw new UnauthorizedException('Invalid email or password.');
     }
@@ -142,7 +147,9 @@ export class UsersService {
       where: { username: identifier },
     });
 
-    const ok = admin ? await verifyPassword(dto.password, admin.password) : false;
+    const ok = admin
+      ? await verifyPassword(dto.password, admin.password)
+      : false;
     if (!admin || !ok) {
       throw new UnauthorizedException('Invalid email or password.');
     }
@@ -243,7 +250,9 @@ export class UsersService {
       data: {
         name: payload.name,
         email: payload.email?.trim().toLowerCase(),
-        password: payload.password ? await hashPassword(payload.password) : undefined,
+        password: payload.password
+          ? await hashPassword(payload.password)
+          : undefined,
       },
     });
 

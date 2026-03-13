@@ -9,7 +9,12 @@ export class UpdateCategoryDto {
   @MaxLength(100)
   category_name?: string;
 
-  @ApiPropertyOptional({ example: 1, nullable: true, description: 'Set to a category id to make it a subcategory; set null to make it a top-level category.' })
+  @ApiPropertyOptional({
+    example: 1,
+    nullable: true,
+    description:
+      'Set to a category id to make it a subcategory; set null to make it a top-level category.',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

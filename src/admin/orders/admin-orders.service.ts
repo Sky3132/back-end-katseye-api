@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { ParcelTrackingService } from '../../parcels/parcel-tracking.service';
@@ -74,9 +78,12 @@ export class AdminOrdersService {
     });
 
     if (dto.status === 'paid') {
-      const tracking = await this.parcelTracking.ensureTrackingForPaidOrder(orderId, {
-        sendEmail: false,
-      });
+      const tracking = await this.parcelTracking.ensureTrackingForPaidOrder(
+        orderId,
+        {
+          sendEmail: false,
+        },
+      );
       await this.sendOrderConfirmationEmail(orderId, tracking?.token ?? null);
     }
 
@@ -91,21 +98,34 @@ export class AdminOrdersService {
   }
 
   private async ensureOrder(orderId: number) {
-    const existing = await this.prisma.order.findUnique({ where: { order_id: orderId } });
+    const existing = await this.prisma.order.findUnique({
+      where: { order_id: orderId },
+    });
     if (!existing) {
       throw new NotFoundException('Order not found.');
     }
     return existing;
   }
 
-  private async sendOrderConfirmationEmail(orderId: number, trackingToken: string | null) {
+  private async sendOrderConfirmationEmail(
+    orderId: number,
+    trackingToken: string | null,
+  ) {
     const order = await this.prisma.order.findUnique({
       where: { order_id: orderId },
       include: {
         user: { select: { email: true, name: true } },
         order_items: {
           include: {
-            product: { select: { title: true, product_name: true, price: true, imgsrc: true, image_url: true } },
+            product: {
+              select: {
+                title: true,
+                product_name: true,
+                price: true,
+                imgsrc: true,
+                image_url: true,
+              },
+            },
           },
           orderBy: { order_item_id: 'asc' },
         },
@@ -116,13 +136,16 @@ export class AdminOrdersService {
     if (!order?.user?.email) return;
 
     const orderNumber = this.toOrderNumber(order.order_id);
-    const customerName = order.user.name ?? order.user.email.split('@')[0] ?? 'Customer';
+    const customerName =
+      order.user.name ?? order.user.email.split('@')[0] ?? 'Customer';
     const status = order.status;
     const totalAmount = Number(order.total_amount);
 
     const itemsHtml = order.order_items
       .map((item) => {
-        const title = escapeHtml(item.product.title ?? item.product.product_name);
+        const title = escapeHtml(
+          item.product.title ?? item.product.product_name,
+        );
         const qty = item.quantity;
         const subtotal = Number(item.subtotal);
         const unitPrice = Number(item.product.price);

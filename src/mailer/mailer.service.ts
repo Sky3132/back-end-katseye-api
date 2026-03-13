@@ -30,7 +30,6 @@ export class MailerService {
   async sendMail(payload: { to: string; subject: string; html: string }) {
     const transporter = this.getTransporter();
     if (!transporter) {
-      // eslint-disable-next-line no-console
       console.warn(
         'MailerService: SMTP not configured (set SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS). Skipping email send.',
       );
@@ -50,4 +49,3 @@ export class MailerService {
     });
   }
 }
-

@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 import { UpdateNotificationDto } from './dto/update-notification.dto';
@@ -73,7 +77,9 @@ export class NotificationsService {
     try {
       response = await fetch(`${this.apiUrl}${path}`, init);
     } catch {
-      throw new InternalServerErrorException('Failed to reach notification API.');
+      throw new InternalServerErrorException(
+        'Failed to reach notification API.',
+      );
     }
 
     if (response.status === 404) {

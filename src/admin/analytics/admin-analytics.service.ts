@@ -89,7 +89,8 @@ export class AdminAnalyticsService {
         };
       })
       .sort((a, b) => {
-        if (b.quantity_sold !== a.quantity_sold) return b.quantity_sold - a.quantity_sold;
+        if (b.quantity_sold !== a.quantity_sold)
+          return b.quantity_sold - a.quantity_sold;
         if (b.revenue !== a.revenue) return b.revenue - a.revenue;
         return a.product.id - b.product.id;
       })
@@ -98,7 +99,10 @@ export class AdminAnalyticsService {
         ...item,
       }));
 
-    const totalUnitsSold = items.reduce((sum, item) => sum + item.quantity_sold, 0);
+    const totalUnitsSold = items.reduce(
+      (sum, item) => sum + item.quantity_sold,
+      0,
+    );
     const totalRevenue = items.reduce((sum, item) => sum + item.revenue, 0);
 
     return {

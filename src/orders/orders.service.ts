@@ -53,7 +53,11 @@ export class OrdersService {
     const paymentMethod = (dto.payment_method ?? '').trim().toLowerCase();
     const requestedStatus = dto.status ?? 'pending';
     const initialStatus: 'pending' | 'paid' =
-      paymentMethod === 'cod' ? 'pending' : requestedStatus === 'paid' ? 'paid' : 'pending';
+      paymentMethod === 'cod'
+        ? 'pending'
+        : requestedStatus === 'paid'
+          ? 'paid'
+          : 'pending';
 
     const createdOrder = await this.prisma.$transaction(async (tx) => {
       const addressId = await this.resolveAddressId(tx, userId, dto);
@@ -71,7 +75,9 @@ export class OrdersService {
         });
 
         if (!product) {
-          throw new BadRequestException('A product in your cart no longer exists.');
+          throw new BadRequestException(
+            'A product in your cart no longer exists.',
+          );
         }
 
         const effectiveStock = product.variants.length
@@ -192,9 +198,12 @@ export class OrdersService {
 
     let trackingToken: string | null = null;
     if (initialStatus === 'paid') {
-      const tracking = await this.parcelTracking.ensureTrackingForPaidOrder(createdOrder.id, {
-        sendEmail: false,
-      });
+      const tracking = await this.parcelTracking.ensureTrackingForPaidOrder(
+        createdOrder.id,
+        {
+          sendEmail: false,
+        },
+      );
       trackingToken = tracking?.token ?? null;
     }
 
@@ -203,7 +212,10 @@ export class OrdersService {
     return createdOrder;
   }
 
-  private async sendOrderConfirmationEmail(orderId: number, trackingToken: string | null) {
+  private async sendOrderConfirmationEmail(
+    orderId: number,
+    trackingToken: string | null,
+  ) {
     const order = await this.prisma.order.findUnique({
       where: { order_id: orderId },
       include: {
@@ -211,7 +223,9 @@ export class OrdersService {
         address: true,
         order_items: {
           include: {
-            product: { select: { title: true, product_name: true, price: true } },
+            product: {
+              select: { title: true, product_name: true, price: true },
+            },
           },
           orderBy: { order_item_id: 'asc' },
         },
@@ -224,12 +238,15 @@ export class OrdersService {
     if (!toEmail) return;
 
     const orderNumber = `ORD-${10000 + order.order_id}`;
-    const customerName = order.user?.name ?? toEmail.split('@')[0] ?? 'Customer';
+    const customerName =
+      order.user?.name ?? toEmail.split('@')[0] ?? 'Customer';
     const totalAmount = Number(order.total_amount);
 
     const itemsHtml = order.order_items
       .map((item) => {
-        const title = escapeHtml(item.product.title ?? item.product.product_name);
+        const title = escapeHtml(
+          item.product.title ?? item.product.product_name,
+        );
         const qty = item.quantity;
         const unitPrice = Number(item.product.price);
         const subtotal = Number(item.subtotal);
@@ -246,11 +263,14 @@ export class OrdersService {
       .join('');
 
     const siteUrl = (process.env.SITE_URL ?? '').trim().replace(/\/+$/, '');
-    const trackingUrl = siteUrl && trackingToken ? `${siteUrl}/track/${trackingToken}` : '';
+    const trackingUrl =
+      siteUrl && trackingToken ? `${siteUrl}/track/${trackingToken}` : '';
     const ordersLink = siteUrl ? `${siteUrl}/orders` : '';
 
     const isPaid = (order.status ?? '').toLowerCase() === 'paid';
-    const headline = isPaid ? 'Thank you for your purchase!' : 'We received your order!';
+    const headline = isPaid
+      ? 'Thank you for your purchase!'
+      : 'We received your order!';
     const subtitle = isPaid
       ? `Hi ${escapeHtml(customerName)}, we appreciate you. Your order is confirmed and being processed.`
       : `Hi ${escapeHtml(customerName)}, thanks! Your order is received and pending confirmation.`;

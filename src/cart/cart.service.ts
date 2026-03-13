@@ -54,7 +54,9 @@ export class CartService {
     if (existingItem) {
       const newQuantity = existingItem.quantity + dto.quantity;
       if (effectiveStock < newQuantity) {
-        throw new BadRequestException('Insufficient stock for requested quantity.');
+        throw new BadRequestException(
+          'Insufficient stock for requested quantity.',
+        );
       }
 
       return this.prisma.cart_item.update({

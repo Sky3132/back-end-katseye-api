@@ -61,7 +61,8 @@ export class UploadsService {
   }
 
   private requestBaseUrl(req: Request) {
-    const proto = (req.headers['x-forwarded-proto'] as string | undefined) ?? req.protocol;
+    const proto =
+      (req.headers['x-forwarded-proto'] as string | undefined) ?? req.protocol;
     const host = req.get('host');
     return `${proto}://${host}`;
   }

@@ -16,7 +16,9 @@ export class AdminAnalyticsController {
   ): Promise<MostSoldResponse> {
     const parsedTake = Number(take);
     const takeNumber =
-      take !== undefined && Number.isFinite(parsedTake) ? parsedTake : undefined;
+      take !== undefined && Number.isFinite(parsedTake)
+        ? parsedTake
+        : undefined;
 
     const statusesList = statuses ? [statuses] : undefined;
     return this.adminAnalyticsService.getMostSoldProducts({

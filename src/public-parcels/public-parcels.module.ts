@@ -9,4 +9,3 @@ import { PublicParcelsService } from './public-parcels.service';
   providers: [PublicParcelsService],
 })
 export class PublicParcelsModule {}
-

@@ -37,7 +37,10 @@ export class UsersController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @UseFilters(PlainTextHttpExceptionFilter)
-  async login(@Body() dto: LoginUserDto, @Res({ passthrough: true }) res: Response) {
+  async login(
+    @Body() dto: LoginUserDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const result = await this.usersService.login(dto);
     res.cookie('auth_token', result.token, {
       httpOnly: true,
@@ -68,9 +71,7 @@ export class UsersController {
 
   @Post('mockapi')
   @UseGuards(JwtCookieGuard, AdminGuard)
-  createUser(
-    @Body() dto: { name: string; email: string; password: string },
-  ) {
+  createUser(@Body() dto: { name: string; email: string; password: string }) {
     return this.usersService.createUser(dto);
   }
 

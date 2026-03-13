@@ -41,8 +41,11 @@ export async function verifyPassword(
     return false;
   }
 
-  const derivedKey = (await scrypt(password, salt, expectedHash.length)) as Buffer;
+  const derivedKey = (await scrypt(
+    password,
+    salt,
+    expectedHash.length,
+  )) as Buffer;
   if (derivedKey.length !== expectedHash.length) return false;
   return timingSafeEqual(derivedKey, expectedHash);
 }
-

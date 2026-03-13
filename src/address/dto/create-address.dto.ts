@@ -37,4 +37,3 @@ export class CreateAddressDto {
   @MaxLength(255)
   street!: string;
 }
-

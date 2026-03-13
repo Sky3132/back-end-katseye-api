@@ -6,4 +6,3 @@ export class CancelOrderDto {
   @IsIn(['cancelled'])
   status?: 'cancelled';
 }
-

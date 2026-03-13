@@ -8,7 +8,10 @@ export class CreateCategoryDto {
   @MaxLength(100)
   category_name!: string;
 
-  @ApiPropertyOptional({ example: 1, description: 'Parent category id (for subcategories).' })
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'Parent category id (for subcategories).',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

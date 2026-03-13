@@ -25,16 +25,20 @@ export class AddressController {
   }
 
   @Post()
-  create(@Req() req: Request & { user?: AuthUser }, @Body() dto: CreateAddressDto) {
+  create(
+    @Req() req: Request & { user?: AuthUser },
+    @Body() dto: CreateAddressDto,
+  ) {
     return this.addressService.createForUser(this.getUserId(req), dto);
   }
 
   private getUserId(req: Request & { user?: AuthUser }) {
     const id = Number(req.user?.sub);
     if (!Number.isInteger(id) || id <= 0) {
-      throw new UnauthorizedException('Token user id is invalid for address operations.');
+      throw new UnauthorizedException(
+        'Token user id is invalid for address operations.',
+      );
     }
     return id;
   }
 }
-

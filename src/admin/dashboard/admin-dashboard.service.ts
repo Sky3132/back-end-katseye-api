@@ -64,7 +64,9 @@ export class AdminDashboardService {
     ]);
 
     const thisMonthSales = Number(thisMonthSalesAgg._sum.total_amount ?? 0);
-    const lastMonthSalesToDate = Number(lastMonthSalesAgg._sum.total_amount ?? 0);
+    const lastMonthSalesToDate = Number(
+      lastMonthSalesAgg._sum.total_amount ?? 0,
+    );
 
     const salesChangePercent =
       lastMonthSalesToDate > 0
@@ -212,7 +214,8 @@ export class AdminDashboardService {
       },
       topSellingBooks: topSellingGrouped.map((item) => ({
         product_id: item.product_id,
-        title: topProductMap.get(item.product_id) ?? `Product #${item.product_id}`,
+        title:
+          topProductMap.get(item.product_id) ?? `Product #${item.product_id}`,
         quantity_sold: item._sum.quantity ?? 0,
       })),
       recentOrders: recentOrders.map((order) => ({

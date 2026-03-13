@@ -10,7 +10,13 @@ import { UsersService } from './users.service';
 @Module({
   imports: [PrismaModule],
   controllers: [UsersController],
-  providers: [UsersService, TokenService, JwtCookieGuard, AdminGuard, UserGuard],
+  providers: [
+    UsersService,
+    TokenService,
+    JwtCookieGuard,
+    AdminGuard,
+    UserGuard,
+  ],
   exports: [TokenService, JwtCookieGuard, AdminGuard, UserGuard],
 })
 export class UsersModule {}

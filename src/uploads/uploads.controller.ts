@@ -22,7 +22,9 @@ export class UploadsController {
   async uploadImage(@Req() req: Request) {
     const file = (req as Request & { file?: unknown }).file;
     if (!file) {
-      throw new BadRequestException('Missing file. Send as multipart/form-data with field "file".');
+      throw new BadRequestException(
+        'Missing file. Send as multipart/form-data with field "file".',
+      );
     }
 
     return this.uploadsService.saveImage(req, file);

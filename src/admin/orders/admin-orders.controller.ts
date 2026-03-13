@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { AdminGuard } from '../../users/admin.guard';
 import { JwtCookieGuard } from '../../users/jwt-cookie.guard';
 import { AdminOrdersService } from './admin-orders.service';
@@ -31,4 +40,3 @@ export class AdminOrdersController {
     return this.adminOrdersService.updateStatus(id, dto);
   }
 }
-

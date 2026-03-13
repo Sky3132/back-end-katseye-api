@@ -137,9 +137,26 @@ export class ProductsService {
     },
   ) {
     const variantTotalStock =
-      product.variants?.reduce((sum, variant) => sum + (variant.stock ?? 0), 0) ??
-      0;
-    const effectiveStock = (product.variants?.length ?? 0) > 0 ? variantTotalStock : product.stock;
+      product.variants?.reduce(
+        (sum, variant) => sum + (variant.stock ?? 0),
+        0,
+      ) ?? 0;
+    const effectiveStock =
+      (product.variants?.length ?? 0) > 0 ? variantTotalStock : product.stock;
+
+    const mainCategoryId = product.category
+      ? (product.category.parent?.category_id ?? product.category.category_id)
+      : null;
+    const mainCategoryName = product.category
+      ? (product.category.parent?.category_name ??
+        product.category.category_name)
+      : null;
+    const subCategoryId = product.category?.parent
+      ? product.category.category_id
+      : null;
+    const subCategoryName = product.category?.parent
+      ? product.category.category_name
+      : null;
 
     return {
       id: product.product_id,
@@ -158,6 +175,10 @@ export class ProductsService {
       category_name: product.category?.category_name ?? null,
       parent_category_id: product.category?.parent_category_id ?? null,
       parent_category_name: product.category?.parent?.category_name ?? null,
+      main_category_id: mainCategoryId,
+      main_category_name: mainCategoryName,
+      subcategory_id: subCategoryId,
+      subcategory_name: subCategoryName,
       category: product.category
         ? {
             id: product.category.category_id,
@@ -180,6 +201,8 @@ export class ProductsService {
 
   private isMissingParentCategoryColumn(err: unknown) {
     const e = err as { code?: string; meta?: { column?: string } };
-    return e?.code === 'P2022' && e?.meta?.column?.includes('parent_category_id');
+    return (
+      e?.code === 'P2022' && e?.meta?.column?.includes('parent_category_id')
+    );
   }
 }

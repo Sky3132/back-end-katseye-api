@@ -1,4 +1,9 @@
-import { ArgumentsHost, Catch, ExceptionFilter, HttpException } from '@nestjs/common';
+import {
+  ArgumentsHost,
+  Catch,
+  ExceptionFilter,
+  HttpException,
+} from '@nestjs/common';
 import type { Response } from 'express';
 
 @Catch(HttpException)
@@ -17,9 +22,8 @@ export class PlainTextHttpExceptionFilter implements ExceptionFilter {
         ? payload
         : Array.isArray(payload?.message)
           ? payload.message.join('\n')
-          : payload?.message ?? 'Request failed.';
+          : (payload?.message ?? 'Request failed.');
 
     res.status(status).type('text/plain').send(message);
   }
 }
-
