@@ -3,7 +3,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
+import type { OrderTrackerQueryDto, OrderTrackerTab } from './dto/order-tracker-query.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { ParcelTrackingService } from '../../parcels/parcel-tracking.service';
 import { MailerService } from '../../mailer/mailer.service';
@@ -24,6 +27,134 @@ export class AdminOrdersService {
     private readonly parcelTracking: ParcelTrackingService,
     private readonly mailer: MailerService,
   ) {}
+
+  async getTrackerSummary() {
+    const { fromDate, toDateExclusive } = this.todayRange();
+
+    const [totalOrdersToday, pendingOrdersToday, deliveredAgg, cancelledToday] =
+      await Promise.all([
+        this.prisma.order.count({
+          where: { order_date: { gte: fromDate, lt: toDateExclusive } },
+        }),
+        this.prisma.order.count({
+          where: {
+            order_date: { gte: fromDate, lt: toDateExclusive },
+            status: { in: ['pending', 'paid'] },
+          },
+        }),
+        this.prisma.order.aggregate({
+          where: {
+            order_date: { gte: fromDate, lt: toDateExclusive },
+            status: 'delivered',
+          },
+          _sum: { total_amount: true },
+        }),
+        this.prisma.order.count({
+          where: {
+            order_date: { gte: fromDate, lt: toDateExclusive },
+            status: 'cancelled',
+          },
+        }),
+      ]);
+
+    const [newCount, inProgressCount, dispatchedCount, completedCount] =
+      await Promise.all([
+        this.prisma.order.count({
+          where: {
+            order_date: { gte: fromDate, lt: toDateExclusive },
+            status: 'pending',
+          },
+        }),
+        this.prisma.order.count({
+          where: {
+            order_date: { gte: fromDate, lt: toDateExclusive },
+            status: 'paid',
+          },
+        }),
+        this.prisma.order.count({
+          where: {
+            order_date: { gte: fromDate, lt: toDateExclusive },
+            status: 'shipped',
+          },
+        }),
+        this.prisma.order.count({
+          where: {
+            order_date: { gte: fromDate, lt: toDateExclusive },
+            status: 'delivered',
+          },
+        }),
+      ]);
+
+    return {
+      range: {
+        from: fromDate,
+        to: new Date(toDateExclusive.getTime() - 1),
+      },
+      totalOrdersToday,
+      pendingOrdersToday,
+      totalRevenueToday: Number(deliveredAgg._sum.total_amount ?? 0),
+      customerFeedbackToday: 0,
+      statusCounts: {
+        new: newCount,
+        in_progress: inProgressCount,
+        awaiting_pickup: 0,
+        dispatched: dispatchedCount,
+        completed: completedCount,
+        cancelled: cancelledToday,
+      },
+    };
+  }
+
+  async listTracker(query: OrderTrackerQueryDto) {
+    const take = query.take ?? 25;
+    const page = query.page ?? 1;
+    if (!Number.isInteger(take) || take <= 0) {
+      throw new BadRequestException('take must be a positive integer.');
+    }
+    if (!Number.isInteger(page) || page <= 0) {
+      throw new BadRequestException('page must be a positive integer.');
+    }
+
+    const skip = (page - 1) * take;
+    const { fromDate, toDateExclusive } = this.parseRange(query.from, query.to);
+
+    const where: Prisma.orderWhereInput = {
+      order_date: { gte: fromDate, lt: toDateExclusive },
+      ...this.whereForTab(query.tab),
+      ...this.whereForSearch(query.search),
+    };
+
+    const [total, orders] = await Promise.all([
+      this.prisma.order.count({ where }),
+      this.prisma.order.findMany({
+        where,
+        take,
+        skip,
+        orderBy: { order_date: 'desc' },
+        include: {
+          user: { select: { user_id: true, email: true, name: true } },
+          shipment: { select: { status: true } },
+        },
+      }),
+    ]);
+
+    const items = orders.map((order) => ({
+      id: order.order_id,
+      order_number: this.toOrderNumber(order.order_id),
+      user: order.user,
+      total_amount: Number(order.total_amount),
+      status: order.status,
+      tracker_status: this.toTrackerStatus(order.status, order.shipment?.status),
+      order_date: order.order_date,
+    }));
+
+    return {
+      page,
+      take,
+      total,
+      items,
+    };
+  }
 
   async listAll(take = 50) {
     const orders = await this.prisma.order.findMany({
@@ -69,12 +200,57 @@ export class AdminOrdersService {
 
   async updateStatus(orderId: number, dto: UpdateOrderStatusDto) {
     await this.ensureOrder(orderId);
-    const updated = await this.prisma.order.update({
-      where: { order_id: orderId },
-      data: { status: dto.status },
-      include: {
-        user: { select: { user_id: true, email: true, name: true } },
-      },
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.update({
+        where: { order_id: orderId },
+        data: { status: dto.status },
+        include: {
+          user: { select: { user_id: true, email: true, name: true } },
+          shipment: true,
+        },
+      });
+
+      if (dto.status === 'shipped') {
+        if (!order.shipment) {
+          throw new BadRequestException('Shipment record is missing for order.');
+        }
+
+        const now = new Date();
+        const nextTrackingNumber =
+          order.shipment.tracking_number ??
+          (await this.generateUniqueTrackingNumber(tx, orderId));
+        const nextCarrier =
+          order.shipment.courier?.trim() &&
+          order.shipment.courier.trim().toLowerCase() !== 'pending assignment'
+            ? order.shipment.courier
+            : this.generateCarrierCode();
+
+        await tx.shipment.update({
+          where: { order_id: orderId },
+          data: {
+            tracking_number: nextTrackingNumber,
+            courier: nextCarrier,
+            status: 'shipped',
+            shipped_at: order.shipment.shipped_at ?? now,
+          },
+        });
+      }
+
+      if (dto.status === 'delivered') {
+        if (order.shipment) {
+          const now = new Date();
+          await tx.shipment.update({
+            where: { order_id: orderId },
+            data: {
+              status: 'delivered',
+              delivered_at: order.shipment.delivered_at ?? now,
+            },
+          });
+        }
+      }
+
+      return order;
     });
 
     if (dto.status === 'paid') {
@@ -87,6 +263,17 @@ export class AdminOrdersService {
       await this.sendOrderConfirmationEmail(orderId, tracking?.token ?? null);
     }
 
+    const shipment = await this.prisma.shipment.findUnique({
+      where: { order_id: orderId },
+      select: {
+        courier: true,
+        tracking_number: true,
+        status: true,
+        shipped_at: true,
+        delivered_at: true,
+      },
+    });
+
     return {
       id: updated.order_id,
       order_number: this.toOrderNumber(updated.order_id),
@@ -94,6 +281,15 @@ export class AdminOrdersService {
       total_amount: Number(updated.total_amount),
       status: updated.status,
       order_date: updated.order_date,
+      shipment: shipment
+        ? {
+            courier: shipment.courier,
+            tracking_number: shipment.tracking_number,
+            status: shipment.status,
+            shipped_at: shipment.shipped_at,
+            delivered_at: shipment.delivered_at,
+          }
+        : null,
     };
   }
 
@@ -164,7 +360,7 @@ export class AdminOrdersService {
     const siteUrl = (process.env.SITE_URL ?? '').trim().replace(/\/+$/, '');
     const ordersLink = siteUrl ? `${siteUrl}/orders` : '';
     const trackingUrl =
-      siteUrl && trackingToken ? `${siteUrl}/track/${trackingToken}` : '';
+      siteUrl && trackingToken ? `${siteUrl}/track-order/${trackingToken}` : '';
 
     const html = `
       <div style="background:#0b0b0b;padding:24px 0">
@@ -251,5 +447,208 @@ export class AdminOrdersService {
 
   private toOrderNumber(orderId: number) {
     return `ORD-${10000 + orderId}`;
+  }
+
+  private async generateUniqueTrackingNumber(
+    tx: Prisma.TransactionClient,
+    orderId: number,
+  ) {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const trackingNumber = this.generateTrackingNumber(orderId);
+      const exists = await tx.shipment.count({
+        where: { tracking_number: trackingNumber },
+      });
+      if (!exists) return trackingNumber;
+    }
+    throw new Error('Failed to generate a unique tracking number.');
+  }
+
+  private generateTrackingNumber(orderId: number) {
+    const suffix = randomBytes(3).toString('hex').toUpperCase();
+    return `KAT-${10000 + orderId}-${suffix}`;
+  }
+
+  private generateCarrierCode() {
+    const suffix = randomBytes(2).toString('hex').toUpperCase();
+    return `KATSEYE-${suffix}`;
+  }
+
+  async getDetails(orderId: number) {
+    const order = await this.prisma.order.findUnique({
+      where: { order_id: orderId },
+      include: {
+        user: { select: { user_id: true, email: true, name: true } },
+        address: true,
+        shipment: { include: { parcel_tracking: true } },
+        order_items: {
+          include: {
+            product: {
+              select: {
+                product_id: true,
+                title: true,
+                product_name: true,
+                imgsrc: true,
+                image_url: true,
+                price: true,
+              },
+            },
+          },
+          orderBy: { order_item_id: 'asc' },
+        },
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found.');
+    }
+
+    return {
+      id: order.order_id,
+      order_number: this.toOrderNumber(order.order_id),
+      order_date: order.order_date,
+      status: order.status,
+      tracker_status: this.toTrackerStatus(order.status, order.shipment?.status),
+      payment_method: order.payment_method,
+      total_amount: Number(order.total_amount),
+      user: order.user,
+      address: order.address,
+      shipment: order.shipment
+        ? {
+            id: order.shipment.shipment_id,
+            courier: order.shipment.courier,
+            tracking_number: order.shipment.tracking_number,
+            shipping_fee: Number(order.shipment.shipping_fee),
+            status: order.shipment.status,
+            shipped_at: order.shipment.shipped_at,
+            delivered_at: order.shipment.delivered_at,
+            parcel_tracking: order.shipment.parcel_tracking
+              ? {
+                  id: order.shipment.parcel_tracking.parcel_tracking_id,
+                  token: order.shipment.parcel_tracking.token,
+                  eta_date: order.shipment.parcel_tracking.eta_date,
+                  destination_address:
+                    order.shipment.parcel_tracking.destination_address,
+                }
+              : null,
+          }
+        : null,
+      items: order.order_items.map((item) => ({
+        id: item.order_item_id,
+        product: {
+          id: item.product.product_id,
+          title: item.product.title ?? item.product.product_name,
+          imgsrc: item.product.image_url ?? item.product.imgsrc,
+          price: Number(item.product.price),
+        },
+        quantity: item.quantity,
+        subtotal: Number(item.subtotal),
+      })),
+    };
+  }
+
+  private toTrackerStatus(orderStatus: string, shipmentStatus?: string | null) {
+    const normalized = orderStatus.trim().toLowerCase();
+    if (normalized === 'cancelled') return 'cancelled';
+    if (normalized === 'delivered') return 'completed';
+    if (normalized === 'shipped') return 'dispatched';
+    if (normalized === 'pending') return 'new';
+    if (normalized === 'paid') {
+      if (shipmentStatus?.trim().toLowerCase() === 'awaiting_pickup') {
+        return 'awaiting_pickup';
+      }
+      return 'in_progress';
+    }
+    return 'in_progress';
+  }
+
+  private whereForTab(tab?: OrderTrackerTab): Prisma.orderWhereInput {
+    if (!tab || tab === 'all') return {};
+    if (tab === 'new') return { status: 'pending' };
+    if (tab === 'in_progress') return { status: 'paid' };
+    if (tab === 'awaiting_pickup')
+      return {
+        status: 'paid',
+        shipment: { is: { status: 'awaiting_pickup' } },
+      };
+    if (tab === 'dispatched') return { status: 'shipped' };
+    if (tab === 'completed') return { status: 'delivered' };
+    if (tab === 'cancelled') return { status: 'cancelled' };
+    return {};
+  }
+
+  private whereForSearch(search?: string): Prisma.orderWhereInput {
+    const q = (search ?? '').trim();
+    if (!q) return {};
+
+    const numeric = Number(q.replace(/[^\d]/g, ''));
+    const orderId =
+      Number.isInteger(numeric) && numeric >= 10000 ? numeric - 10000 : NaN;
+    const byOrderId =
+      Number.isInteger(orderId) && orderId > 0 ? { order_id: orderId } : null;
+
+    return {
+      OR: [
+        ...(byOrderId ? [byOrderId] : []),
+        { user: { is: { email: { contains: q } } } },
+        { user: { is: { name: { contains: q } } } },
+      ],
+    };
+  }
+
+  private todayRange() {
+    const now = new Date();
+    const fromDate = new Date(now);
+    fromDate.setHours(0, 0, 0, 0);
+    const toDateExclusive = new Date(fromDate);
+    toDateExclusive.setDate(toDateExclusive.getDate() + 1);
+    return { fromDate, toDateExclusive };
+  }
+
+  private parseRange(from?: string, to?: string) {
+    if (!from && !to) {
+      return this.todayRange();
+    }
+
+    const now = new Date();
+    const fromDate = from ? this.parseDate(from, 'from') : this.todayRange().fromDate;
+    const toDate = to ? this.parseDate(to, 'to') : now;
+    const toDateExclusive = this.isDateOnly(to ?? '')
+      ? this.addDays(toDate, 1)
+      : toDate;
+
+    if (toDateExclusive.getTime() <= fromDate.getTime()) {
+      throw new BadRequestException('to must be after from.');
+    }
+
+    return { fromDate, toDateExclusive };
+  }
+
+  private parseDate(value: string, field: 'from' | 'to') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      throw new BadRequestException(`${field} is required.`);
+    }
+
+    const date = this.isDateOnly(trimmed)
+      ? new Date(`${trimmed}T00:00:00.000Z`)
+      : new Date(trimmed);
+
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(
+        `${field} must be a valid date (YYYY-MM-DD or ISO string).`,
+      );
+    }
+
+    return date;
+  }
+
+  private isDateOnly(value: string) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(value);
+  }
+
+  private addDays(date: Date, days: number) {
+    const d = new Date(date);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d;
   }
 }

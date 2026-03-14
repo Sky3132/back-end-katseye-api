@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -10,11 +10,16 @@ export class CreateCategoryDto {
 
   @ApiPropertyOptional({
     example: 1,
+    nullable: true,
     description: 'Parent category id (for subcategories).',
   })
   @IsOptional()
-  @Type(() => Number)
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return value;
+    if (value === '') return undefined;
+    return Number(value);
+  })
   @IsInt()
   @Min(1)
-  parent_category_id?: number;
+  parent_category_id?: number | null;
 }

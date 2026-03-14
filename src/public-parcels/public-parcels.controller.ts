@@ -13,4 +13,14 @@ export class PublicParcelsController {
     }
     return payload;
   }
+
+  @Get('tracking-number/:trackingNumber')
+  async trackByTrackingNumber(@Param('trackingNumber') trackingNumber: string) {
+    const payload =
+      await this.publicParcels.trackByTrackingNumber(trackingNumber);
+    if (!payload) {
+      throw new NotFoundException('Tracking number not found.');
+    }
+    return payload;
+  }
 }

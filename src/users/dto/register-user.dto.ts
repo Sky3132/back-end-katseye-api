@@ -14,7 +14,7 @@ export class RegisterUserDto {
   @Transform(({ value }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
-  @IsEmail()
+  @IsEmail({}, { message: 'Please enter a valid email address.' })
   email?: string;
 
   @ApiProperty({ example: 'user@example.com' })
@@ -22,13 +22,13 @@ export class RegisterUserDto {
   @Transform(({ value }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
-  @IsString()
-  @MinLength(1)
+  @IsString({ message: 'Username must be a string.' })
+  @MinLength(1, { message: 'Username is required.' })
   username?: string;
 
   @ApiProperty({ example: 'Password123!' })
-  @IsString()
-  @MinLength(6)
+  @IsString({ message: 'Password must be a string.' })
+  @MinLength(6, { message: 'Password must be at least 6 characters.' })
   password!: string;
 
   @ApiPropertyOptional({ enum: ['user', 'admin'], example: 'user' })
@@ -36,7 +36,9 @@ export class RegisterUserDto {
   @Transform(({ value }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
-  @IsIn(['user', 'admin'])
+  @IsIn(['user', 'admin'], {
+    message: 'Role must be either "user" or "admin".',
+  })
   role?: 'user' | 'admin';
 
   @ApiPropertyOptional({
@@ -44,7 +46,7 @@ export class RegisterUserDto {
     example: 'ADMIN_SECRET_KEY_2026',
   })
   @IsOptional()
-  @IsString()
-  @MinLength(1)
+  @IsString({ message: 'Admin code must be a string.' })
+  @MinLength(1, { message: 'Admin code is required for admin registration.' })
   adminCode?: string;
 }

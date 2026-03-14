@@ -13,6 +13,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { UsersModule } from './users/users.module';
 import { PublicParcelsModule } from './public-parcels/public-parcels.module';
 import { ParcelTrackingModule } from './parcels/parcel-tracking.module';
+import { PublicOrdersModule } from './public-orders/public-orders.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ParcelTrackingModule } from './parcels/parcel-tracking.module';
     UploadsModule,
     AdminModule,
     PublicParcelsModule,
+    PublicOrdersModule,
     ParcelTrackingModule,
   ],
   controllers: [AppController],

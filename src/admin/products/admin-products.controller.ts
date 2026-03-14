@@ -40,6 +40,11 @@ export class AdminProductsController {
     return this.adminProductsService.findAll();
   }
 
+  @Get('archived')
+  findArchived() {
+    return this.adminProductsService.findArchived();
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.adminProductsService.findOne(id);
@@ -68,8 +73,24 @@ export class AdminProductsController {
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.adminProductsService.remove(id);
+  archive(
+    @Req() req: Request & { user?: AuthUser },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.adminProductsService.archive(this.getAdminId(req), id);
+  }
+
+  @Patch(':id/resell')
+  resell(
+    @Req() req: Request & { user?: AuthUser },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.adminProductsService.resell(this.getAdminId(req), id);
+  }
+
+  @Delete(':id/hard')
+  hardDelete(@Param('id', ParseIntPipe) id: number) {
+    return this.adminProductsService.hardDelete(id);
   }
 
   @Post(':id/variants')

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import type { product, product_variant } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -18,7 +18,7 @@ export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll() {
-    const where = {};
+    const where = { archived_at: null };
 
     const include = {
       category: {
@@ -47,6 +47,7 @@ export class ProductsService {
         orderBy: { product_id: 'desc' },
       });
     } catch (err) {
+      this.throwIfMissingArchivedAtColumn(err);
       if (this.isMissingParentCategoryColumn(err)) {
         products = await this.prisma.product.findMany({
           where,
@@ -72,6 +73,7 @@ export class ProductsService {
   async findOne(productId: number) {
     const where = {
       product_id: productId,
+      archived_at: null,
     };
 
     const include = {
@@ -100,6 +102,7 @@ export class ProductsService {
         include,
       });
     } catch (err) {
+      this.throwIfMissingArchivedAtColumn(err);
       if (this.isMissingParentCategoryColumn(err)) {
         product = await this.prisma.product.findFirst({
           where,
@@ -204,5 +207,14 @@ export class ProductsService {
     return (
       e?.code === 'P2022' && e?.meta?.column?.includes('parent_category_id')
     );
+  }
+
+  private throwIfMissingArchivedAtColumn(err: unknown): never | void {
+    const e = err as { code?: string; meta?: { column?: string } };
+    if (e?.code === 'P2022' && e?.meta?.column?.includes('archived_at')) {
+      throw new ServiceUnavailableException(
+        'Database is missing product.archived_at. Run Prisma migration for archived products.',
+      );
+    }
   }
 }

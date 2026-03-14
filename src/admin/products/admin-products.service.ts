@@ -2,7 +2,9 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import type { product, product_variant } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CreateAdminProductDto } from './dto/create-admin-product.dto';
@@ -132,8 +134,14 @@ export class AdminProductsService {
   }
 
   findAll() {
-    return this.findManyProducts().then((products) =>
+    return this.findManyProducts({ archived_at: null }).then((products) =>
       products.map((product) => this.toFrontendProduct(product)),
+    );
+  }
+
+  findArchived() {
+    return this.findManyProducts({ archived_at: { not: null } }).then(
+      (products) => products.map((product) => this.toFrontendProduct(product)),
     );
   }
 
@@ -306,6 +314,79 @@ export class AdminProductsService {
   }
 
   async remove(productId: number) {
+    return this.hardDelete(productId);
+  }
+
+  async archive(adminId: number, productId: number) {
+    await this.findAdmin(adminId);
+    const existing = await this.findOne(productId);
+    if (existing.archived_at) {
+      return existing;
+    }
+
+    const now = new Date();
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.cart_item.deleteMany({ where: { product_id: productId } });
+        await tx.product.update({
+          where: { product_id: productId },
+          data: { archived_at: now },
+        });
+        await tx.inventory_log.create({
+          data: {
+            product_id: productId,
+            admin_id: adminId,
+            change_qty: 0,
+            action: 'product_archived',
+          },
+        });
+      });
+    } catch (err) {
+      const e = err as { code?: string; meta?: { column?: string } };
+      if (e?.code === 'P2022' && e?.meta?.column?.includes('archived_at')) {
+        throw new ServiceUnavailableException(
+          'Database is missing product.archived_at. Run Prisma migration for archived products.',
+        );
+      }
+      throw err;
+    }
+
+    return this.findOne(productId);
+  }
+
+  async resell(adminId: number, productId: number) {
+    await this.findAdmin(adminId);
+    await this.findOne(productId);
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.product.update({
+          where: { product_id: productId },
+          data: { archived_at: null },
+        });
+        await tx.inventory_log.create({
+          data: {
+            product_id: productId,
+            admin_id: adminId,
+            change_qty: 0,
+            action: 'product_resold',
+          },
+        });
+      });
+    } catch (err) {
+      const e = err as { code?: string; meta?: { column?: string } };
+      if (e?.code === 'P2022' && e?.meta?.column?.includes('archived_at')) {
+        throw new ServiceUnavailableException(
+          'Database is missing product.archived_at. Run Prisma migration for archived products.',
+        );
+      }
+      throw err;
+    }
+
+    return this.findOne(productId);
+  }
+
+  async hardDelete(productId: number) {
     await this.findOne(productId);
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -542,6 +623,7 @@ export class AdminProductsService {
       description: product.description,
       price: Number(product.price),
       current_stock: product.stock,
+      archived_at: product.archived_at ?? null,
       category_id: product.category?.category_id ?? null,
       category_name: product.category?.category_name ?? null,
       parent_category_id: product.category?.parent_category_id ?? null,
@@ -571,9 +653,10 @@ export class AdminProductsService {
     };
   }
 
-  private findManyProducts() {
+  private findManyProducts(where?: Prisma.productWhereInput) {
     return this.prisma.product
       .findMany({
+        where,
         include: {
           category: {
             select: {
@@ -593,10 +676,16 @@ export class AdminProductsService {
         orderBy: { product_id: 'desc' },
       })
       .catch((err) => {
+        if (this.isMissingArchivedAtColumn(err)) {
+          throw new ServiceUnavailableException(
+            'Database is missing product.archived_at. Run Prisma migration for archived products.',
+          );
+        }
         if (!this.isMissingParentCategoryColumn(err)) {
           throw err;
         }
         return this.prisma.product.findMany({
+          where,
           include: {
             category: {
               select: {
@@ -616,5 +705,10 @@ export class AdminProductsService {
     return (
       e?.code === 'P2022' && e?.meta?.column?.includes('parent_category_id')
     );
+  }
+
+  private isMissingArchivedAtColumn(err: unknown) {
+    const e = err as { code?: string; meta?: { column?: string } };
+    return e?.code === 'P2022' && e?.meta?.column?.includes('archived_at');
   }
 }

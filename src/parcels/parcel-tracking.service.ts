@@ -116,8 +116,8 @@ export class ParcelTrackingService {
   }) {
     const siteUrl = (process.env.SITE_URL ?? '').trim().replace(/\/+$/, '');
     const link = siteUrl
-      ? `${siteUrl}/track/${input.token}`
-      : `/track/${input.token}`;
+      ? `${siteUrl}/track-order/${input.token}`
+      : `/track-order/${input.token}`;
 
     const subject = 'Track your Katseye parcel';
     const html = `

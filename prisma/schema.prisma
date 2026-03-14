@@ -99,6 +99,8 @@ model product {
   price        Decimal @db.Decimal(10, 2)
   stock        Int     @default(0)
 
+  archived_at DateTime?
+
   admin_id    Int
   category_id Int?
 

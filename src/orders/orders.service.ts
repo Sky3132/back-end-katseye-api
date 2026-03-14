@@ -196,16 +196,14 @@ export class OrdersService {
       return this.toOrderResponse(order);
     });
 
-    let trackingToken: string | null = null;
-    if (initialStatus === 'paid') {
-      const tracking = await this.parcelTracking.ensureTrackingForPaidOrder(
-        createdOrder.id,
-        {
-          sendEmail: false,
-        },
-      );
-      trackingToken = tracking?.token ?? null;
-    }
+    const tracking = await this.parcelTracking.ensureTrackingForPaidOrder(
+      createdOrder.id,
+      {
+        // The order confirmation email already includes the tracking link.
+        sendEmail: false,
+      },
+    );
+    const trackingToken = tracking?.token ?? null;
 
     await this.sendOrderConfirmationEmail(createdOrder.id, trackingToken);
 
@@ -264,7 +262,7 @@ export class OrdersService {
 
     const siteUrl = (process.env.SITE_URL ?? '').trim().replace(/\/+$/, '');
     const trackingUrl =
-      siteUrl && trackingToken ? `${siteUrl}/track/${trackingToken}` : '';
+      siteUrl && trackingToken ? `${siteUrl}/track-order/${trackingToken}` : '';
     const ordersLink = siteUrl ? `${siteUrl}/orders` : '';
 
     const isPaid = (order.status ?? '').toLowerCase() === 'paid';

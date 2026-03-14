@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -15,17 +16,24 @@ export class CartService {
   constructor(private readonly prisma: PrismaService) {}
 
   async addItem(userId: number, dto: AddCartItemDto) {
-    const product = await this.prisma.product.findFirst({
-      where: {
-        product_id: dto.product_id,
-      },
-      include: {
-        variants: {
-          select: { variant_id: true, stock: true },
-          orderBy: { variant_id: 'asc' },
+    let product;
+    try {
+      product = await this.prisma.product.findFirst({
+        where: {
+          product_id: dto.product_id,
+          archived_at: null,
         },
-      },
-    });
+        include: {
+          variants: {
+            select: { variant_id: true, stock: true },
+            orderBy: { variant_id: 'asc' },
+          },
+        },
+      });
+    } catch (err) {
+      this.throwIfMissingArchivedAtColumn(err);
+      throw err;
+    }
 
     if (!product) {
       throw new NotFoundException('Product not found.');
@@ -77,15 +85,43 @@ export class CartService {
   async getItems(userId: number) {
     const cart = await this.getOrCreateCart(userId);
 
-    const items = await this.prisma.cart_item.findMany({
-      where: { cart_id: cart.cart_id },
-      include: {
-        product: true,
-      },
-      orderBy: { cart_item_id: 'desc' },
-    });
+    let items;
+    try {
+      items = await this.prisma.cart_item.findMany({
+        where: { cart_id: cart.cart_id },
+        include: {
+          product: {
+            select: {
+              product_id: true,
+              title: true,
+              product_name: true,
+              imgsrc: true,
+              price: true,
+              stock: true,
+              archived_at: true,
+            },
+          },
+        },
+        orderBy: { cart_item_id: 'desc' },
+      });
+    } catch (err) {
+      this.throwIfMissingArchivedAtColumn(err);
+      throw err;
+    }
 
-    return items.map((item) => ({
+    const archivedCartItemIds = items
+      .filter((item) => item.product.archived_at != null)
+      .map((item) => item.cart_item_id);
+
+    if (archivedCartItemIds.length) {
+      await this.prisma.cart_item.deleteMany({
+        where: { cart_item_id: { in: archivedCartItemIds } },
+      });
+    }
+
+    const activeItems = items.filter((item) => item.product.archived_at == null);
+
+    return activeItems.map((item) => ({
       id: item.cart_item_id,
       product_id: item.product_id,
       quantity: item.quantity,
@@ -110,17 +146,24 @@ export class CartService {
 
     await this.assertCartOwner(userId, item.cart_id);
 
-    const product = await this.prisma.product.findFirst({
-      where: {
-        product_id: item.product_id,
-      },
-      include: {
-        variants: {
-          select: { variant_id: true, stock: true },
-          orderBy: { variant_id: 'asc' },
+    let product;
+    try {
+      product = await this.prisma.product.findFirst({
+        where: {
+          product_id: item.product_id,
+          archived_at: null,
         },
-      },
-    });
+        include: {
+          variants: {
+            select: { variant_id: true, stock: true },
+            orderBy: { variant_id: 'asc' },
+          },
+        },
+      });
+    } catch (err) {
+      this.throwIfMissingArchivedAtColumn(err);
+      throw err;
+    }
     if (!product) {
       throw new NotFoundException('Product not found.');
     }
@@ -207,6 +250,15 @@ export class CartService {
 
     if (!cart || cart.user_id !== userId) {
       throw new ForbiddenException('You do not have access to this cart item.');
+    }
+  }
+
+  private throwIfMissingArchivedAtColumn(err: unknown): never | void {
+    const e = err as { code?: string; meta?: { column?: string } };
+    if (e?.code === 'P2022' && e?.meta?.column?.includes('archived_at')) {
+      throw new ServiceUnavailableException(
+        'Database is missing product.archived_at. Run Prisma migration for archived products.',
+      );
     }
   }
 }

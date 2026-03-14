@@ -14,7 +14,7 @@ export class LoginUserDto {
   @Transform(({ value }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
-  @IsEmail()
+  @IsEmail({}, { message: 'Please enter a valid email address.' })
   @MaxLength(150)
   email?: string;
 
@@ -23,13 +23,13 @@ export class LoginUserDto {
   @Transform(({ value }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
-  @IsString()
+  @IsString({ message: 'Username must be a string.' })
   @MaxLength(150)
-  @MinLength(1)
+  @MinLength(1, { message: 'Username is required.' })
   username?: string;
 
   @ApiProperty({ example: 'Password123!' })
-  @IsString()
-  @MinLength(6)
+  @IsString({ message: 'Password must be a string.' })
+  @MinLength(6, { message: 'Password must be at least 6 characters.' })
   password!: string;
 }

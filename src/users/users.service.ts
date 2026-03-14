@@ -37,7 +37,7 @@ export class UsersService {
       const registrationKey = dto.adminCode?.trim();
       const expectedKey = process.env.ADMIN_REGISTRATION_KEY;
       if (!expectedKey || !registrationKey || registrationKey !== expectedKey) {
-        throw new UnauthorizedException('Invalid admin code');
+        throw new UnauthorizedException('Admin code is incorrect.');
       }
 
       const existingAdminCount = await this.prisma.admin.count();
@@ -110,11 +110,11 @@ export class UsersService {
       where: { email: identifier },
     });
 
-    if (user) {
-      const ok = await verifyPassword(dto.password, user.password);
-      if (!ok) {
-        throw new UnauthorizedException('Invalid email or password.');
-      }
+      if (user) {
+        const ok = await verifyPassword(dto.password, user.password);
+        if (!ok) {
+          throw new UnauthorizedException('Email or password is incorrect.');
+        }
 
       if (!isHashedPassword(user.password)) {
         await this.prisma.user.update({
@@ -140,7 +140,7 @@ export class UsersService {
     const allowedAdminUsername =
       process.env.ADMIN_USERNAME?.trim().toLowerCase();
     if (allowedAdminUsername && identifier !== allowedAdminUsername) {
-      throw new UnauthorizedException('Invalid email or password.');
+      throw new UnauthorizedException('Email or password is incorrect.');
     }
 
     const admin = await this.prisma.admin.findUnique({
@@ -151,7 +151,7 @@ export class UsersService {
       ? await verifyPassword(dto.password, admin.password)
       : false;
     if (!admin || !ok) {
-      throw new UnauthorizedException('Invalid email or password.');
+      throw new UnauthorizedException('Email or password is incorrect.');
     }
 
     if (!isHashedPassword(admin.password)) {
