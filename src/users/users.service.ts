@@ -5,6 +5,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -14,6 +15,7 @@ import {
 } from '../common/password';
 import { LoginUserDto } from './dto/login-user.dto';
 import { RegisterUserDto } from './dto/register-user.dto';
+import { UpdateMeDto } from './dto/update-me.dto';
 import { TokenService } from './token.service';
 import { UserRole } from './user-role.type';
 
@@ -43,6 +45,13 @@ export class UsersService {
       const existingAdminCount = await this.prisma.admin.count();
       if (existingAdminCount > 0) {
         throw new ConflictException('Admin account already exists.');
+      }
+
+      const existingUserWithAdminEmail = await this.prisma.user.findUnique({
+        where: { email },
+      });
+      if (existingUserWithAdminEmail) {
+        throw new ConflictException('Email is already registered.');
       }
 
       const existingAdmin = await this.prisma.admin.findUnique({
@@ -80,6 +89,13 @@ export class UsersService {
       throw new ConflictException('Email is already registered.');
     }
 
+    const existingAdminWithUserEmail = await this.prisma.admin.findUnique({
+      where: { username: email },
+    });
+    if (existingAdminWithUserEmail) {
+      throw new ConflictException('Email is already registered.');
+    }
+
     const defaultName = email.split('@')[0] || 'user';
     const password = await hashPassword(dto.password);
     const createdUser = await this.prisma.user.create({
@@ -106,15 +122,48 @@ export class UsersService {
       throw new BadRequestException('Email is required.');
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: { email: identifier },
-    });
+    const [admin, user] = await Promise.all([
+      this.prisma.admin.findUnique({ where: { username: identifier } }),
+      this.prisma.user.findUnique({ where: { email: identifier } }),
+    ]);
 
-      if (user) {
-        const ok = await verifyPassword(dto.password, user.password);
-        if (!ok) {
-          throw new UnauthorizedException('Email or password is incorrect.');
+    const canAttemptAdmin = !!admin;
+
+    if (canAttemptAdmin) {
+      const adminOk = await verifyPassword(dto.password, admin.password);
+      if (adminOk) {
+        if (!isHashedPassword(admin.password)) {
+          await this.prisma.admin.update({
+            where: { admin_id: admin.admin_id },
+            data: { password: await hashPassword(dto.password) },
+          });
         }
+
+        const token = this.tokenService.sign({
+          sub: String(admin.admin_id),
+          email: admin.username,
+          name: admin.username,
+          role: 'admin',
+        });
+
+        return {
+          message: 'Login successful.',
+          user: {
+            id: String(admin.admin_id),
+            email: admin.username,
+            name: admin.username,
+            role: 'admin' as const,
+          },
+          token,
+        };
+      }
+    }
+
+    if (user) {
+      const userOk = await verifyPassword(dto.password, user.password);
+      if (!userOk) {
+        throw new UnauthorizedException('Email or password is incorrect.');
+      }
 
       if (!isHashedPassword(user.password)) {
         await this.prisma.user.update({
@@ -137,47 +186,7 @@ export class UsersService {
       };
     }
 
-    const allowedAdminUsername =
-      process.env.ADMIN_USERNAME?.trim().toLowerCase();
-    if (allowedAdminUsername && identifier !== allowedAdminUsername) {
-      throw new UnauthorizedException('Email or password is incorrect.');
-    }
-
-    const admin = await this.prisma.admin.findUnique({
-      where: { username: identifier },
-    });
-
-    const ok = admin
-      ? await verifyPassword(dto.password, admin.password)
-      : false;
-    if (!admin || !ok) {
-      throw new UnauthorizedException('Email or password is incorrect.');
-    }
-
-    if (!isHashedPassword(admin.password)) {
-      await this.prisma.admin.update({
-        where: { admin_id: admin.admin_id },
-        data: { password: await hashPassword(dto.password) },
-      });
-    }
-
-    const token = this.tokenService.sign({
-      sub: String(admin.admin_id),
-      email: admin.username,
-      name: admin.username,
-      role: 'admin',
-    });
-
-    return {
-      message: 'Login successful.',
-      user: {
-        id: String(admin.admin_id),
-        email: admin.username,
-        name: admin.username,
-        role: 'admin' as const,
-      },
-      token,
-    };
+    throw new UnauthorizedException('Email or password is incorrect.');
   }
 
   async getAllUsers() {
@@ -200,6 +209,102 @@ export class UsersService {
       name: authUser.name ?? authUser.email.split('@')[0] ?? 'user',
       role: authUser.role,
     };
+  }
+
+  async getMe(authUser: { sub: string; email: string; name?: string; role: UserRole }) {
+    if (authUser.role === 'admin') {
+      return this.getCurrentUser(authUser);
+    }
+
+    const userId = this.parseUserId(authUser.sub);
+    let user: { user_id: number; email: string; name: string; role: UserRole; details?: { full_name: string | null; phone_e164: string | null } | null } | null =
+      null;
+    try {
+      user = await this.prisma.user.findUnique({
+        where: { user_id: userId },
+        include: { details: true },
+      });
+    } catch (err) {
+      if (this.isMissingUserDetailsTable(err)) {
+        user = await this.prisma.user.findUnique({
+          where: { user_id: userId },
+        });
+      } else {
+        throw err;
+      }
+    }
+
+    if (!user) {
+      throw new NotFoundException('User not found.');
+    }
+
+    return {
+      id: String(user.user_id),
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      full_name: user.details?.full_name ?? null,
+      phone_e164: user.details?.phone_e164 ?? null,
+    };
+  }
+
+  async updateMe(
+    authUser: { sub: string; email: string; name?: string; role: UserRole },
+    dto: UpdateMeDto,
+  ) {
+    if (authUser.role === 'admin') {
+      throw new BadRequestException('Admin profile cannot be edited here.');
+    }
+
+    const userId = this.parseUserId(authUser.sub);
+
+    if (dto.email) {
+      const email = dto.email.trim().toLowerCase();
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email },
+      });
+      if (existingUser && existingUser.user_id !== userId) {
+        throw new ConflictException('Email is already registered.');
+      }
+    }
+
+    await this.findUserById(userId);
+
+    try {
+      await this.prisma.user.update({
+        where: { user_id: userId },
+        data: {
+          name: dto.name,
+          email: dto.email?.trim().toLowerCase(),
+          details: {
+            upsert: {
+              create: {
+                full_name: dto.full_name,
+                phone_e164: dto.phone_e164,
+              },
+              update: {
+                full_name: dto.full_name,
+                phone_e164: dto.phone_e164,
+              },
+            },
+          },
+        },
+      });
+    } catch (err) {
+      if (!this.isMissingUserDetailsTable(err)) {
+        throw err;
+      }
+      // Allow saving basic profile even if user_details table isn't migrated yet.
+      await this.prisma.user.update({
+        where: { user_id: userId },
+        data: {
+          name: dto.name,
+          email: dto.email?.trim().toLowerCase(),
+        },
+      });
+    }
+
+    return this.getMe({ ...authUser, sub: String(userId) });
   }
 
   async createUser(user: { name: string; email: string; password: string }) {
@@ -330,5 +435,19 @@ export class UsersService {
     }
 
     return user;
+  }
+
+  private isMissingUserDetailsTable(err: unknown) {
+    const e = err as { code?: string; meta?: unknown; message?: string };
+    // Prisma uses P2021 for missing table and P2022 for missing column.
+    if (e?.code === 'P2021') return true;
+    if (e?.code === 'P2022') {
+      const meta = e.meta as { column?: string } | undefined;
+      if (meta?.column?.includes('user_details')) return true;
+      if (e.message?.toLowerCase().includes('user_details')) return true;
+    }
+    // MySQL/MariaDB missing table errors can surface without Prisma codes.
+    const msg = (e?.message ?? '').toLowerCase();
+    return msg.includes('user_details') && msg.includes("doesn't exist");
   }
 }

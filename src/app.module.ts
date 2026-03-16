@@ -14,6 +14,7 @@ import { UsersModule } from './users/users.module';
 import { PublicParcelsModule } from './public-parcels/public-parcels.module';
 import { ParcelTrackingModule } from './parcels/parcel-tracking.module';
 import { PublicOrdersModule } from './public-orders/public-orders.module';
+import { LocationsModule } from './locations/locations.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { PublicOrdersModule } from './public-orders/public-orders.module';
     PublicParcelsModule,
     PublicOrdersModule,
     ParcelTrackingModule,
+    LocationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

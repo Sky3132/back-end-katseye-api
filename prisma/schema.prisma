@@ -11,6 +11,14 @@ enum UserRole {
   admin
 }
 
+enum PlaceType {
+  country
+  region
+  province
+  city
+  district
+}
+
 model admin {
   admin_id Int    @id @default(autoincrement())
   username String @unique @db.VarChar(100)
@@ -31,13 +39,29 @@ model user {
   carts     cart[]
   orders    order[]
   addresses address[]
+  details   user_details?
+}
+
+model user_details {
+  user_details_id Int      @id @default(autoincrement())
+  user_id         Int      @unique
+  full_name       String?  @db.VarChar(150)
+  phone_e164      String?  @db.VarChar(32)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  user user @relation(fields: [user_id], references: [user_id], onDelete: Cascade, map: "user_details_user_id_fkey")
+
+  @@index([user_id], map: "user_details_user_id_idx")
 }
 
 model address {
   address_id Int    @id @default(autoincrement())
   user_id    Int
+  is_default Boolean @default(false)
   full_name  String? @db.VarChar(150)
   email      String? @db.VarChar(150)
+  phone_e164 String? @db.VarChar(32)
   region     String? @db.VarChar(100)
   street     String @db.VarChar(255)
   city       String @db.VarChar(100)
@@ -45,11 +69,19 @@ model address {
   barangay   String? @db.VarChar(100)
   zip_code   String @db.VarChar(20)
   country    String @db.VarChar(100)
+  country_code String? @db.VarChar(2)
+
+  region_id   String? @db.VarChar(64)
+  province_id String? @db.VarChar(64)
+  city_id     String? @db.VarChar(64)
+  district_id String? @db.VarChar(64)
 
   user   user    @relation(fields: [user_id], references: [user_id], onDelete: Cascade, map: "address_user_id_fkey")
   orders order[]
 
   @@index([user_id], map: "address_user_id_idx")
+  @@index([user_id, is_default])
+  @@index([country_code])
 }
 
 model cart {
@@ -155,8 +187,35 @@ model order {
   address_id     Int
   order_date     DateTime @default(now())
   payment_method String   @db.VarChar(100)
+  currency       String   @default("USD") @db.VarChar(3)
+  subtotal_amount Decimal @default(0) @db.Decimal(10, 2)
+  shipping_fee    Decimal @default(0) @db.Decimal(10, 2)
+  tax_amount     Decimal  @default(0) @db.Decimal(10, 2)
+  usd_to_php_rate Float?
+  display_currency String? @db.VarChar(3)
+  fx_rate_usd      Float?
+  fx_rate_usd_to_display Float?
+  approx_total_display Float?
   total_amount   Decimal  @db.Decimal(10, 2)
   status         String   @default("pending")
+
+  customer_name  String? @db.VarChar(150)
+  customer_email String? @db.VarChar(150)
+  customer_phone String? @db.VarChar(32)
+
+  address_street   String? @db.VarChar(255)
+  address_zip_code String? @db.VarChar(20)
+  country_code     String? @db.VarChar(2)
+  country_name     String? @db.VarChar(100)
+  region_name      String? @db.VarChar(100)
+  province_name    String? @db.VarChar(100)
+  city_name        String? @db.VarChar(100)
+  district_name    String? @db.VarChar(100)
+
+  region_id   String? @db.VarChar(64)
+  province_id String? @db.VarChar(64)
+  city_id     String? @db.VarChar(64)
+  district_id String? @db.VarChar(64)
 
   user        user         @relation(fields: [user_id], references: [user_id], onDelete: Cascade, map: "order_user_id_fkey")
   address     address      @relation(fields: [address_id], references: [address_id], map: "order_address_id_fkey")
@@ -165,6 +224,37 @@ model order {
 
   @@index([user_id], map: "order_user_id_idx")
   @@index([address_id], map: "order_address_id_idx")
+  @@index([customer_email])
+}
+
+model place {
+  id           String    @id @db.VarChar(64)
+  type         PlaceType
+  parent_id    String?   @db.VarChar(64)
+  country_code String    @db.VarChar(2)
+  name         String    @db.VarChar(255)
+  code         String?   @db.VarChar(64)
+  has_children Boolean   @default(false)
+  sort_order   Int       @default(0)
+
+  parent   place?   @relation("place_parent", fields: [parent_id], references: [id], onDelete: SetNull)
+  children place[]  @relation("place_parent")
+
+  @@index([type, parent_id])
+  @@index([country_code, type])
+  @@index([country_code, name])
+}
+
+model location_schema {
+  country_code String @id @db.VarChar(2)
+  levels       Json
+}
+
+model calling_code {
+  country_code String  @id @db.VarChar(2)
+  calling_code String  @db.VarChar(8)
+  country_name String? @db.VarChar(100)
+  flag_emoji   String? @db.VarChar(16)
 }
 
 model order_item {

@@ -183,7 +183,6 @@ export class OrdersService {
               product: true,
             },
           },
-          user: { select: { email: true, name: true } },
         },
       });
 
@@ -239,6 +238,17 @@ export class OrdersService {
     const customerName =
       order.user?.name ?? toEmail.split('@')[0] ?? 'Customer';
     const totalAmount = Number(order.total_amount);
+    const usdToPhpRate = this.getUsdToPhpRate();
+
+    const formatMoney = (currency: 'USD' | 'PHP', amount: number) => {
+      const locale = currency === 'PHP' ? 'en-PH' : 'en-US';
+      return new Intl.NumberFormat(locale, {
+        style: 'currency',
+        currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(amount);
+    };
 
     const itemsHtml = order.order_items
       .map((item) => {
@@ -246,15 +256,22 @@ export class OrdersService {
           item.product.title ?? item.product.product_name,
         );
         const qty = item.quantity;
-        const unitPrice = Number(item.product.price);
-        const subtotal = Number(item.subtotal);
+        const unitPriceUsd = Number(item.product.price);
+        const subtotalUsd = Number(item.subtotal);
+        const unitPricePhp = unitPriceUsd * usdToPhpRate;
+        const subtotalPhp = subtotalUsd * usdToPhpRate;
         return `
           <tr>
             <td style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.08)">
               <div style="font-weight:700;color:#ffffff">${title}</div>
-              <div style="font-size:12px;color:rgba(255,255,255,0.72)">Qty: ${qty} • Unit: ₱${unitPrice.toFixed(2)}</div>
+              <div style="font-size:12px;color:rgba(255,255,255,0.72)">
+                Qty: ${qty} &bull; Unit: ${escapeHtml(formatMoney('USD', unitPriceUsd))} (≈ ${escapeHtml(formatMoney('PHP', unitPricePhp))})
+              </div>
             </td>
-            <td align="right" style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.08);font-weight:700;color:#ffffff">₱${subtotal.toFixed(2)}</td>
+            <td align="right" style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.08);font-weight:700;color:#ffffff">
+              ${escapeHtml(formatMoney('USD', subtotalUsd))}<br/>
+              <span style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.72)">(≈ ${escapeHtml(formatMoney('PHP', subtotalPhp))})</span>
+            </td>
           </tr>
         `.trim();
       })
@@ -312,7 +329,10 @@ export class OrdersService {
                   ${itemsHtml}
                   <tr>
                     <td style="padding:14px 0;color:rgba(255,255,255,0.72);font-size:12px">Total</td>
-                    <td align="right" style="padding:14px 0;color:#ffffff;font-size:16px;font-weight:900">₱${totalAmount.toFixed(2)}</td>
+                    <td align="right" style="padding:14px 0;color:#ffffff;font-size:16px;font-weight:900">
+                      ${escapeHtml(formatMoney('USD', totalAmount))}<br/>
+                      <span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.72)">(≈ ${escapeHtml(formatMoney('PHP', totalAmount * usdToPhpRate))})</span>
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -323,15 +343,6 @@ export class OrdersService {
                     ? `
                   <a href="${trackingUrl}" style="display:inline-block;background:#ffd600;color:#0b0b0b;padding:12px 16px;border-radius:10px;text-decoration:none;font-weight:900;font-size:13px">
                     Track my order
-                  </a>
-                `.trim()
-                    : ''
-                }
-                ${
-                  ordersLink
-                    ? `
-                  <a href="${ordersLink}" style="display:inline-block;background:transparent;color:#ffd600;padding:12px 16px;border-radius:10px;text-decoration:none;font-weight:900;font-size:13px;border:1px solid rgba(255,214,0,0.45)">
-                    View my orders
                   </a>
                 `.trim()
                     : ''
@@ -352,6 +363,24 @@ export class OrdersService {
       subject: `${isPaid ? 'Thank you for your purchase' : 'Order received'} • ${orderNumber}`,
       html,
     });
+  }
+
+  private getUsdToPhpRate(): number {
+    const raw = (process.env.FX_RATES_USD_JSON ?? '').trim();
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const php = Number(parsed?.PHP);
+        if (Number.isFinite(php) && php > 0) return php;
+      } catch {
+        // ignore
+      }
+    }
+
+    const fallback = Number(process.env.USD_TO_PHP_RATE ?? '0');
+    if (Number.isFinite(fallback) && fallback > 0) return fallback;
+
+    return 55.35;
   }
 
   async findMyOrders(userId: number) {
@@ -424,6 +453,22 @@ export class OrdersService {
         throw new NotFoundException('Address not found.');
       }
 
+      const incomingPhone = dto.address?.phone;
+      if (incomingPhone != null) {
+        const phoneE164 = await this.normalizePhoneToE164(
+          tx,
+          incomingPhone,
+          dto.address?.country_code ?? address.country_code ?? null,
+        );
+
+        if (phoneE164) {
+          await tx.address.update({
+            where: { address_id: address.address_id },
+            data: { phone_e164: phoneE164 },
+          });
+        }
+      }
+
       return address.address_id;
     }
 
@@ -431,14 +476,89 @@ export class OrdersService {
       throw new BadRequestException('An address or address_id is required.');
     }
 
+    const phoneE164 = await this.normalizePhoneToE164(
+      tx,
+      dto.address.phone,
+      dto.address.country_code ?? null,
+    );
+
     const address = await tx.address.create({
       data: {
         user_id: userId,
-        ...dto.address,
+        full_name: dto.address.full_name,
+        email: dto.address.email,
+        phone_e164: phoneE164,
+        country: dto.address.country ?? '',
+        region: dto.address.region ?? null,
+        province: dto.address.province ?? '',
+        city: dto.address.city ?? '',
+        barangay: dto.address.barangay ?? null,
+        zip_code: dto.address.zip_code,
+        street: dto.address.street,
       },
     });
 
     return address.address_id;
+  }
+
+  private async normalizePhoneToE164(
+    tx: Prisma.TransactionClient,
+    input: string | null | undefined,
+    countryCode2: string | null,
+  ): Promise<string | null> {
+    const value = (input ?? '').trim();
+    if (value === '') return null;
+
+    const compact = value.replace(/[^\d+]/g, '');
+    if (compact === '' || compact === '+') {
+      throw new BadRequestException('Phone number is invalid.');
+    }
+
+    if (compact.startsWith('+')) {
+      const digits = compact.slice(1).replace(/\D/g, '');
+      if (digits.length < 8 || digits.length > 15) {
+        throw new BadRequestException('Phone number is invalid.');
+      }
+      return `+${digits}`;
+    }
+
+    if (compact.startsWith('00')) {
+      const digits = compact.slice(2).replace(/\D/g, '');
+      if (digits.length < 8 || digits.length > 15) {
+        throw new BadRequestException('Phone number is invalid.');
+      }
+      return `+${digits}`;
+    }
+
+    const digitsOnly = compact.replace(/\D/g, '');
+    if (digitsOnly.length < 6) {
+      throw new BadRequestException('Phone number is invalid.');
+    }
+
+    const cc = (countryCode2 ?? '').trim().toUpperCase();
+    const callingCode =
+      cc.length === 2
+        ? (await tx.calling_code.findUnique({
+            where: { country_code: cc },
+            select: { calling_code: true },
+          }))?.calling_code ?? null
+        : null;
+
+    if (!callingCode) {
+      throw new BadRequestException(
+        'Phone number must be in E.164 format (example: +639...).',
+      );
+    }
+
+    let national = digitsOnly;
+    if (national.startsWith('0')) national = national.slice(1);
+
+    const e164Digits = `${callingCode}${national}`;
+    if (e164Digits.length < 8 || e164Digits.length > 15) {
+      throw new BadRequestException('Phone number is invalid.');
+    }
+
+    return `+${e164Digits}`;
   }
 
   private toOrderResponse(order: {
@@ -454,6 +574,7 @@ export class OrdersService {
       province: string;
       zip_code: string;
       country: string;
+      phone_e164?: string | null;
     };
     shipment: {
       shipment_id: number;
@@ -483,7 +604,15 @@ export class OrdersService {
       payment_method: order.payment_method,
       total_amount: Number(order.total_amount),
       status: order.status,
-      address: order.address,
+      address: {
+        address_id: order.address.address_id,
+        street: order.address.street,
+        city: order.address.city,
+        province: order.address.province,
+        zip_code: order.address.zip_code,
+        country: order.address.country,
+        phone_e164: order.address.phone_e164 ?? null,
+      },
       shipment: order.shipment
         ? {
             id: order.shipment.shipment_id,

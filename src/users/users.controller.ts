@@ -19,6 +19,7 @@ import { AuthUser } from './auth-user.interface';
 import { AdminGuard } from './admin.guard';
 import { LoginUserDto } from './dto/login-user.dto';
 import { RegisterUserDto } from './dto/register-user.dto';
+import { UpdateMeDto } from './dto/update-me.dto';
 import { AUTH_COOKIE_MAX_AGE_MS } from './auth.constants';
 import { JwtCookieGuard } from './jwt-cookie.guard';
 import { UsersService } from './users.service';
@@ -60,7 +61,17 @@ export class UsersController {
   @Get('me')
   @UseGuards(JwtCookieGuard)
   getCurrentUser(@Req() req: Request & { user?: AuthUser }) {
-    return this.usersService.getCurrentUser(req.user as AuthUser);
+    return this.usersService.getMe(req.user as AuthUser);
+  }
+
+  @Put('me')
+  @UseGuards(JwtCookieGuard)
+  @UseFilters(PlainTextHttpExceptionFilter)
+  updateCurrentUser(
+    @Req() req: Request & { user?: AuthUser },
+    @Body() dto: UpdateMeDto,
+  ) {
+    return this.usersService.updateMe(req.user as AuthUser, dto);
   }
 
   @Get('mockapi')

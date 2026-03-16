@@ -7,25 +7,26 @@ import {
   MaxLength,
 } from 'class-validator';
 
-export class CreateAddressDto {
+export class UpdateAddressDto {
   @IsOptional()
   @IsBoolean()
   is_default?: boolean;
 
+  @IsOptional()
   @IsString()
   @MaxLength(150)
-  full_name!: string;
+  full_name?: string;
 
+  @IsOptional()
   @IsEmail()
   @MaxLength(150)
-  email!: string;
+  email?: string;
 
   @IsOptional()
   @IsString()
   @MaxLength(32)
   phone?: string;
 
-  // Back-compat: existing address storage expects these snapshot strings.
   @IsOptional()
   @IsString()
   @MaxLength(100)
@@ -51,9 +52,10 @@ export class CreateAddressDto {
   @MaxLength(100)
   barangay?: string;
 
+  @IsOptional()
   @IsString()
   @Length(2, 2)
-  country_code!: string;
+  country_code?: string;
 
   @IsOptional()
   @IsString()
@@ -75,11 +77,13 @@ export class CreateAddressDto {
   @MaxLength(64)
   district_id?: string;
 
+  @IsOptional()
   @IsString()
   @MaxLength(20)
-  zip_code!: string;
+  zip_code?: string;
 
+  @IsOptional()
   @IsString()
   @MaxLength(255)
-  street!: string;
+  street?: string;
 }

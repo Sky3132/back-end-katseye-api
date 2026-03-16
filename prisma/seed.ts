@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { PrismaMariaDb } from '@prisma/adapter-mariadb';
 import { PrismaClient } from '@prisma/client';
 import { hashPassword } from '../src/common/password';
+import { seedLocations } from './seed-locations';
 
 function createPrismaClient() {
   return new PrismaClient({
@@ -20,15 +21,6 @@ async function main() {
   const username = process.env.ADMIN_USERNAME?.trim().toLowerCase();
   const password = process.env.ADMIN_PASSWORD;
 
-  if (!username || !password) {
-    // Intentionally do not print example passwords.
-    console.error(
-      'Missing ADMIN_USERNAME / ADMIN_PASSWORD env vars (used to create the initial admin).',
-    );
-    process.exitCode = 1;
-    return;
-  }
-
   const prisma = createPrismaClient();
   try {
     await prisma.category.createMany({
@@ -40,11 +32,21 @@ async function main() {
       skipDuplicates: true,
     });
 
+    await seedLocations(prisma);
+
     const existingAdminCount = await prisma.admin.count();
     if (existingAdminCount > 0) {
       console.log(
-        'Admin seed skipped: an admin already exists. Categories have been ensured.',
+        'Admin seed skipped: an admin already exists. Categories and locations have been ensured.',
       );
+      return;
+    }
+
+    if (!username || !password) {
+      console.error(
+        'Missing ADMIN_USERNAME / ADMIN_PASSWORD env vars (used to create the initial admin).',
+      );
+      process.exitCode = 1;
       return;
     }
 

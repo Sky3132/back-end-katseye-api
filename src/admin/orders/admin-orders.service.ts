@@ -336,6 +336,17 @@ export class AdminOrdersService {
       order.user.name ?? order.user.email.split('@')[0] ?? 'Customer';
     const status = order.status;
     const totalAmount = Number(order.total_amount);
+    const usdToPhpRate = this.getUsdToPhpRate();
+
+    const formatMoney = (currency: 'USD' | 'PHP', amount: number) => {
+      const locale = currency === 'PHP' ? 'en-PH' : 'en-US';
+      return new Intl.NumberFormat(locale, {
+        style: 'currency',
+        currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(amount);
+    };
 
     const itemsHtml = order.order_items
       .map((item) => {
@@ -343,15 +354,22 @@ export class AdminOrdersService {
           item.product.title ?? item.product.product_name,
         );
         const qty = item.quantity;
-        const subtotal = Number(item.subtotal);
-        const unitPrice = Number(item.product.price);
+        const subtotalUsd = Number(item.subtotal);
+        const unitPriceUsd = Number(item.product.price);
+        const subtotalPhp = subtotalUsd * usdToPhpRate;
+        const unitPricePhp = unitPriceUsd * usdToPhpRate;
         return `
           <tr>
             <td style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.08)">
               <div style="font-weight:700;color:#ffffff">${title}</div>
-              <div style="font-size:12px;color:rgba(255,255,255,0.72)">Qty: ${qty} • Unit: ₱${unitPrice.toFixed(2)}</div>
+              <div style="font-size:12px;color:rgba(255,255,255,0.72)">
+                Qty: ${qty} &bull; Unit: ${escapeHtml(formatMoney('USD', unitPriceUsd))} (≈ ${escapeHtml(formatMoney('PHP', unitPricePhp))})
+              </div>
             </td>
-            <td align="right" style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.08);font-weight:700;color:#ffffff">₱${subtotal.toFixed(2)}</td>
+            <td align="right" style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.08);font-weight:700;color:#ffffff">
+              ${escapeHtml(formatMoney('USD', subtotalUsd))}<br/>
+              <span style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.72)">(≈ ${escapeHtml(formatMoney('PHP', subtotalPhp))})</span>
+            </td>
           </tr>
         `.trim();
       })
@@ -403,7 +421,10 @@ export class AdminOrdersService {
                   ${itemsHtml}
                   <tr>
                     <td style="padding:14px 0;color:rgba(255,255,255,0.72);font-size:12px">Total</td>
-                    <td align="right" style="padding:14px 0;color:#ffffff;font-size:16px;font-weight:900">₱${totalAmount.toFixed(2)}</td>
+                    <td align="right" style="padding:14px 0;color:#ffffff;font-size:16px;font-weight:900">
+                      ${escapeHtml(formatMoney('USD', totalAmount))}<br/>
+                      <span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.72)">(≈ ${escapeHtml(formatMoney('PHP', totalAmount * usdToPhpRate))})</span>
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -414,15 +435,6 @@ export class AdminOrdersService {
                     ? `
                   <a href="${trackingUrl}" style="display:inline-block;background:#ffd600;color:#0b0b0b;padding:12px 16px;border-radius:10px;text-decoration:none;font-weight:900;font-size:13px">
                     Track my order
-                  </a>
-                `.trim()
-                    : ''
-                }
-                ${
-                  ordersLink
-                    ? `
-                  <a href="${ordersLink}" style="display:inline-block;background:transparent;color:#ffd600;padding:12px 16px;border-radius:10px;text-decoration:none;font-weight:900;font-size:13px;border:1px solid rgba(255,214,0,0.45)">
-                    View my orders
                   </a>
                 `.trim()
                     : ''
@@ -443,6 +455,24 @@ export class AdminOrdersService {
       subject: `Thank you for your purchase • ${orderNumber}`,
       html,
     });
+  }
+
+  private getUsdToPhpRate(): number {
+    const raw = (process.env.FX_RATES_USD_JSON ?? '').trim();
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const php = Number(parsed?.PHP);
+        if (Number.isFinite(php) && php > 0) return php;
+      } catch {
+        // ignore
+      }
+    }
+
+    const fallback = Number(process.env.USD_TO_PHP_RATE ?? '0');
+    if (Number.isFinite(fallback) && fallback > 0) return fallback;
+
+    return 55.35;
   }
 
   private toOrderNumber(orderId: number) {
