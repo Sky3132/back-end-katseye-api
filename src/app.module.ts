@@ -15,6 +15,7 @@ import { PublicParcelsModule } from './public-parcels/public-parcels.module';
 import { ParcelTrackingModule } from './parcels/parcel-tracking.module';
 import { PublicOrdersModule } from './public-orders/public-orders.module';
 import { LocationsModule } from './locations/locations.module';
+import { FxModule } from './fx/fx.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { LocationsModule } from './locations/locations.module';
     PublicOrdersModule,
     ParcelTrackingModule,
     LocationsModule,
+    FxModule,
   ],
   controllers: [AppController],
   providers: [AppService],

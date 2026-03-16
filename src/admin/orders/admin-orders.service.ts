@@ -336,15 +336,46 @@ export class AdminOrdersService {
       order.user.name ?? order.user.email.split('@')[0] ?? 'Customer';
     const status = order.status;
     const totalAmount = Number(order.total_amount);
-    const usdToPhpRate = this.getUsdToPhpRate();
 
-    const formatMoney = (currency: 'USD' | 'PHP', amount: number) => {
-      const locale = currency === 'PHP' ? 'en-PH' : 'en-US';
+    const displayCurrency = (order.display_currency ?? '').trim().toUpperCase();
+    const preferredDisplayCurrency =
+      displayCurrency === 'PHP' ||
+      displayCurrency === 'JPY' ||
+      displayCurrency === 'KRW' ||
+      displayCurrency === 'USD'
+        ? (displayCurrency as 'USD' | 'PHP' | 'JPY' | 'KRW')
+        : null;
+
+    const approxCurrency =
+      preferredDisplayCurrency && preferredDisplayCurrency !== 'USD'
+        ? preferredDisplayCurrency
+        : null;
+    const persistedRate = Number((order as { fx_rate_usd_to_display?: unknown }).fx_rate_usd_to_display);
+    const usdToApproxRate =
+      approxCurrency && Number.isFinite(persistedRate) && persistedRate > 0
+        ? persistedRate
+        : approxCurrency
+          ? this.getUsdFxRate(approxCurrency)
+          : null;
+
+    const formatMoney = (
+      currency: 'USD' | 'PHP' | 'JPY' | 'KRW',
+      amount: number,
+    ) => {
+      const locale =
+        currency === 'PHP'
+          ? 'en-PH'
+          : currency === 'JPY'
+            ? 'ja-JP'
+            : currency === 'KRW'
+              ? 'ko-KR'
+              : 'en-US';
+      const fractionDigits = currency === 'JPY' || currency === 'KRW' ? 0 : 2;
       return new Intl.NumberFormat(locale, {
         style: 'currency',
         currency,
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
+        minimumFractionDigits: fractionDigits,
+        maximumFractionDigits: fractionDigits,
       }).format(amount);
     };
 
@@ -356,19 +387,32 @@ export class AdminOrdersService {
         const qty = item.quantity;
         const subtotalUsd = Number(item.subtotal);
         const unitPriceUsd = Number(item.product.price);
-        const subtotalPhp = subtotalUsd * usdToPhpRate;
-        const unitPricePhp = unitPriceUsd * usdToPhpRate;
+        const subtotalApprox =
+          usdToApproxRate && approxCurrency
+            ? subtotalUsd * usdToApproxRate
+            : null;
+        const unitPriceApprox =
+          usdToApproxRate && approxCurrency
+            ? unitPriceUsd * usdToApproxRate
+            : null;
+        const approxUnitLine =
+          unitPriceApprox !== null && approxCurrency
+            ? ` (≈ ${escapeHtml(formatMoney(approxCurrency, unitPriceApprox))})`
+            : '';
+        const approxSubtotalLine =
+          subtotalApprox !== null && approxCurrency
+            ? `<br/><span style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.72)">(≈ ${escapeHtml(formatMoney(approxCurrency, subtotalApprox))})</span>`
+            : '';
         return `
           <tr>
             <td style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.08)">
               <div style="font-weight:700;color:#ffffff">${title}</div>
               <div style="font-size:12px;color:rgba(255,255,255,0.72)">
-                Qty: ${qty} &bull; Unit: ${escapeHtml(formatMoney('USD', unitPriceUsd))} (≈ ${escapeHtml(formatMoney('PHP', unitPricePhp))})
+                Qty: ${qty} &bull; Unit: ${escapeHtml(formatMoney('USD', unitPriceUsd))}${approxUnitLine}
               </div>
             </td>
             <td align="right" style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.08);font-weight:700;color:#ffffff">
-              ${escapeHtml(formatMoney('USD', subtotalUsd))}<br/>
-              <span style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.72)">(≈ ${escapeHtml(formatMoney('PHP', subtotalPhp))})</span>
+              ${escapeHtml(formatMoney('USD', subtotalUsd))}${approxSubtotalLine}
             </td>
           </tr>
         `.trim();
@@ -422,8 +466,12 @@ export class AdminOrdersService {
                   <tr>
                     <td style="padding:14px 0;color:rgba(255,255,255,0.72);font-size:12px">Total</td>
                     <td align="right" style="padding:14px 0;color:#ffffff;font-size:16px;font-weight:900">
-                      ${escapeHtml(formatMoney('USD', totalAmount))}<br/>
-                      <span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.72)">(≈ ${escapeHtml(formatMoney('PHP', totalAmount * usdToPhpRate))})</span>
+                      ${escapeHtml(formatMoney('USD', totalAmount))}
+                      ${
+                        usdToApproxRate && approxCurrency
+                          ? `<br/><span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.72)">(≈ ${escapeHtml(formatMoney(approxCurrency, totalAmount * usdToApproxRate))})</span>`
+                          : ''
+                      }
                     </td>
                   </tr>
                 </tbody>
@@ -457,22 +505,18 @@ export class AdminOrdersService {
     });
   }
 
-  private getUsdToPhpRate(): number {
+  private getUsdFxRate(currency: 'PHP' | 'JPY' | 'KRW'): number | null {
     const raw = (process.env.FX_RATES_USD_JSON ?? '').trim();
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as Record<string, unknown>;
-        const php = Number(parsed?.PHP);
-        if (Number.isFinite(php) && php > 0) return php;
-      } catch {
-        // ignore
-      }
+    if (!raw) return null;
+
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const value = Number(parsed?.[currency]);
+      if (Number.isFinite(value) && value > 0) return value;
+      return null;
+    } catch {
+      return null;
     }
-
-    const fallback = Number(process.env.USD_TO_PHP_RATE ?? '0');
-    if (Number.isFinite(fallback) && fallback > 0) return fallback;
-
-    return 55.35;
   }
 
   private toOrderNumber(orderId: number) {

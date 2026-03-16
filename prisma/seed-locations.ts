@@ -9,6 +9,17 @@ type CallingCodeRow = {
   calling_code: string;
 };
 
+type SeedPlaceRow = {
+  id: string;
+  type: 'country' | 'region' | 'province' | 'city' | 'district';
+  parent_id: string;
+  country_code: 'PH';
+  name: string;
+  code?: string | null;
+  has_children?: boolean | number | null;
+  sort_order?: number | null;
+};
+
 function dataPath(fileName: string) {
   return path.join(__dirname, 'data', fileName);
 }
@@ -19,6 +30,105 @@ function tryReadJson<T>(filePath: string): T | null {
     return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
   } catch {
     return null;
+  }
+}
+
+function toIntOrNull(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
+function toBool01(value: unknown) {
+  if (value === true) return 1;
+  if (value === false) return 0;
+  const n = Number(value);
+  if (Number.isFinite(n)) return n > 0 ? 1 : 0;
+  return 0;
+}
+
+function safePlacesDataset(value: unknown): SeedPlaceRow[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: SeedPlaceRow[] = [];
+  for (const row of value) {
+    const id = typeof row?.id === 'string' ? row.id.trim() : '';
+    const type = typeof row?.type === 'string' ? row.type.trim() : '';
+    const parent_id = typeof row?.parent_id === 'string' ? row.parent_id.trim() : '';
+    const country_code =
+      typeof row?.country_code === 'string' ? row.country_code.trim().toUpperCase() : '';
+    const name = typeof row?.name === 'string' ? row.name.trim() : '';
+
+    if (!id || !parent_id || !name || country_code !== 'PH') continue;
+    if (!['country', 'region', 'province', 'city', 'district'].includes(type)) continue;
+
+    out.push({
+      id,
+      type: type as SeedPlaceRow['type'],
+      parent_id,
+      country_code: 'PH',
+      name,
+      code: typeof row?.code === 'string' ? row.code.trim() : null,
+      has_children: row?.has_children ?? null,
+      sort_order: row?.sort_order ?? null,
+    });
+  }
+  return out.length ? out : null;
+}
+
+async function seedPlacesFromDataset(prisma: PrismaClient, rows: SeedPlaceRow[]) {
+  // Ensure country root exists.
+  const hasCountry = rows.some((r) => r.type === 'country' && r.id === 'PH');
+  if (!hasCountry) {
+    rows = [
+      {
+        id: 'PH',
+        type: 'country',
+        parent_id: '',
+        country_code: 'PH',
+        name: 'Philippines',
+        code: null,
+        has_children: 1,
+        sort_order: 1,
+      },
+      ...rows,
+    ];
+  }
+
+  // We insert in type order so parent rows exist first.
+  const typeOrder: SeedPlaceRow['type'][] = [
+    'country',
+    'region',
+    'province',
+    'city',
+    'district',
+  ];
+
+  // Chunked multi-row INSERT to keep it fast for ~40k barangays.
+  const chunkSize = 1000;
+  for (const t of typeOrder) {
+    const typed = rows.filter((r) => r.type === t);
+    for (let i = 0; i < typed.length; i += chunkSize) {
+      const chunk = typed.slice(i, i + chunkSize);
+      const values = chunk.map((r) =>
+        Prisma.sql`(${r.id}, ${r.type}, ${r.parent_id}, ${r.country_code}, ${r.name}, ${r.code ?? null}, ${toBool01(r.has_children)}, ${toIntOrNull(r.sort_order) ?? 0})`,
+      );
+
+      // Note: on MariaDB, `id` is primary key; this keeps the seed idempotent.
+      await prisma.$executeRaw(
+        Prisma.sql`
+          INSERT INTO \`place\`
+            (\`id\`, \`type\`, \`parent_id\`, \`country_code\`, \`name\`, \`code\`, \`has_children\`, \`sort_order\`)
+          VALUES ${Prisma.join(values)}
+          ON DUPLICATE KEY UPDATE
+            \`type\`=VALUES(\`type\`),
+            \`parent_id\`=VALUES(\`parent_id\`),
+            \`country_code\`=VALUES(\`country_code\`),
+            \`name\`=VALUES(\`name\`),
+            \`code\`=VALUES(\`code\`),
+            \`has_children\`=VALUES(\`has_children\`),
+            \`sort_order\`=VALUES(\`sort_order\`)
+        `,
+      );
+    }
   }
 }
 
@@ -95,14 +205,40 @@ export async function seedLocations(prisma: PrismaClient) {
   );
 
   // Seed a simplified PH hierarchy (5 macro-regions) so the dropdown is short.
-  // id format is arbitrary; only parent_id chain and type must be consistent.
-  const phRegions: Array<{ id: string; name: string; sort_order: number }> = [
-    { id: 'PH-REG-NCR', name: 'Metro Manila', sort_order: 1 },
-    { id: 'PH-REG-NL', name: 'North Luzon', sort_order: 2 },
-    { id: 'PH-REG-SL', name: 'South Luzon', sort_order: 3 },
-    { id: 'PH-REG-VIS', name: 'Visayas', sort_order: 4 },
-    { id: 'PH-REG-MIN', name: 'Mindanao', sort_order: 5 },
-  ];
+  // If you provide prisma/data/ph-places.json (full PH dataset), we seed that instead.
+  const phDatasetPath = dataPath('ph-places.json');
+  const fullPhDataset = safePlacesDataset(
+    tryReadJson<unknown>(phDatasetPath),
+  );
+  if (fullPhDataset) {
+    // Standard PSGC-style schema levels.
+    const phLevels = [
+      { type: 'region', label: 'Region', required: true },
+      { type: 'province', label: 'Province', required: true },
+      { type: 'city', label: 'City / Municipality', required: true },
+      { type: 'district', label: 'Barangay', required: false },
+    ];
+
+    await prisma.$executeRaw(
+      Prisma.sql`
+        INSERT INTO \`location_schema\` (\`country_code\`, \`levels\`)
+        VALUES ('PH', ${JSON.stringify(phLevels)})
+        ON DUPLICATE KEY UPDATE \`levels\`=VALUES(\`levels\`)
+      `,
+    );
+
+    await seedPlacesFromDataset(prisma, fullPhDataset);
+
+    // Continue to seed calling codes below (common to both modes).
+  } else {
+    // id format is arbitrary; only parent_id chain and type must be consistent.
+    const phRegions: Array<{ id: string; name: string; sort_order: number }> = [
+      { id: 'PH-REG-NCR', name: 'Metro Manila', sort_order: 1 },
+      { id: 'PH-REG-NL', name: 'North Luzon', sort_order: 2 },
+      { id: 'PH-REG-SL', name: 'South Luzon', sort_order: 3 },
+      { id: 'PH-REG-VIS', name: 'Visayas', sort_order: 4 },
+      { id: 'PH-REG-MIN', name: 'Mindanao', sort_order: 5 },
+    ];
 
   // Remove older PH region rows so the dropdown stays short.
   await prisma.$executeRaw(
@@ -115,9 +251,9 @@ export async function seedLocations(prisma: PrismaClient) {
     `,
   );
 
-  for (const r of phRegions) {
-    await prisma.$executeRaw(
-      Prisma.sql`
+    for (const r of phRegions) {
+      await prisma.$executeRaw(
+        Prisma.sql`
         INSERT INTO \`place\`
           (\`id\`, \`type\`, \`parent_id\`, \`country_code\`, \`name\`, \`code\`, \`has_children\`, \`sort_order\`)
         VALUES
@@ -129,9 +265,9 @@ export async function seedLocations(prisma: PrismaClient) {
           \`name\`=VALUES(\`name\`),
           \`has_children\`=VALUES(\`has_children\`),
           \`sort_order\`=VALUES(\`sort_order\`)
-      `,
-    );
-  }
+        `,
+      );
+    }
 
   // Provinces: keep NCR/Visayas examples, and seed Mindanao provinces more completely.
   const phProvinces = [
@@ -194,9 +330,9 @@ export async function seedLocations(prisma: PrismaClient) {
     { id: 'PH-PROV-ZAS', name: 'Zamboanga del Sur', parent_id: 'PH-REG-MIN', sort_order: 36 },
     { id: 'PH-PROV-ZSI', name: 'Zamboanga Sibugay', parent_id: 'PH-REG-MIN', sort_order: 37 },
   ];
-  for (const p of phProvinces) {
-    await prisma.$executeRaw(
-      Prisma.sql`
+    for (const p of phProvinces) {
+      await prisma.$executeRaw(
+        Prisma.sql`
         INSERT INTO \`place\`
           (\`id\`, \`type\`, \`parent_id\`, \`country_code\`, \`name\`, \`code\`, \`has_children\`, \`sort_order\`)
         VALUES
@@ -208,9 +344,9 @@ export async function seedLocations(prisma: PrismaClient) {
           \`name\`=VALUES(\`name\`),
           \`has_children\`=VALUES(\`has_children\`),
           \`sort_order\`=VALUES(\`sort_order\`)
-      `,
-    );
-  }
+        `,
+      );
+    }
 
   // Cities: at least one per province so the cascade always works.
   const phCities = [
@@ -424,6 +560,7 @@ export async function seedLocations(prisma: PrismaClient) {
           \`sort_order\`=VALUES(\`sort_order\`)
       `,
     );
+  }
   }
 
   const callingCodesFromFile =

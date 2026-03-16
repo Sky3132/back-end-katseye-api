@@ -62,6 +62,54 @@ export class OrdersService {
     const createdOrder = await this.prisma.$transaction(async (tx) => {
       const addressId = await this.resolveAddressId(tx, userId, dto);
 
+      const normalizeCurrency = (value: string | null | undefined) => {
+        const v = (value ?? '').trim().toUpperCase();
+        return v === 'USD' || v === 'PHP' || v === 'JPY' || v === 'KRW'
+          ? (v as 'USD' | 'PHP' | 'JPY' | 'KRW')
+          : null;
+      };
+
+      const inferDisplayCurrencyFromCountry = (countryCode2: string | null) => {
+        const cc = (countryCode2 ?? '').trim().toUpperCase();
+        if (cc === 'PH') return 'PHP' as const;
+        if (cc === 'JP') return 'JPY' as const;
+        if (cc === 'KR') return 'KRW' as const;
+        return null;
+      };
+
+      const roundForCurrency = (
+        currency: 'USD' | 'PHP' | 'JPY' | 'KRW',
+        amount: number,
+      ) => {
+        const digits = currency === 'JPY' || currency === 'KRW' ? 0 : 2;
+        const factor = 10 ** digits;
+        return Math.round(amount * factor) / factor;
+      };
+
+      let displayCurrency = normalizeCurrency(dto.display_currency);
+      if (!displayCurrency) {
+        const cc =
+          (dto.address?.country_code ?? '').trim() !== ''
+            ? dto.address?.country_code ?? null
+            : (
+                await tx.address.findUnique({
+                  where: { address_id: addressId },
+                  select: { country_code: true },
+                })
+              )?.country_code ?? null;
+        displayCurrency = inferDisplayCurrencyFromCountry(cc);
+      }
+
+      const fxRateUsdToDisplay =
+        displayCurrency && displayCurrency !== 'USD'
+          ? this.getUsdFxRate(displayCurrency)
+          : null;
+      if (displayCurrency && displayCurrency !== 'USD' && !fxRateUsdToDisplay) {
+        throw new BadRequestException(
+          `FX rate for ${displayCurrency} is not configured. Set FX_RATES_USD_JSON in backend .env.`,
+        );
+      }
+
       let itemsTotal = 0;
       for (const item of cart.cart_items) {
         const product = await tx.product.findUnique({
@@ -158,6 +206,14 @@ export class OrdersService {
           user_id: userId,
           address_id: addressId,
           payment_method: dto.payment_method,
+          display_currency: displayCurrency,
+          fx_rate_usd_to_display: fxRateUsdToDisplay,
+          approx_total_display: fxRateUsdToDisplay
+            ? roundForCurrency(
+                displayCurrency ?? 'USD',
+                (itemsTotal + shippingFee) * fxRateUsdToDisplay,
+              )
+            : null,
           total_amount: itemsTotal + shippingFee,
           status: initialStatus,
           order_items: {
@@ -238,15 +294,46 @@ export class OrdersService {
     const customerName =
       order.user?.name ?? toEmail.split('@')[0] ?? 'Customer';
     const totalAmount = Number(order.total_amount);
-    const usdToPhpRate = this.getUsdToPhpRate();
 
-    const formatMoney = (currency: 'USD' | 'PHP', amount: number) => {
-      const locale = currency === 'PHP' ? 'en-PH' : 'en-US';
+    const displayCurrency = (order.display_currency ?? '').trim().toUpperCase();
+    const preferredDisplayCurrency =
+      displayCurrency === 'PHP' ||
+      displayCurrency === 'JPY' ||
+      displayCurrency === 'KRW' ||
+      displayCurrency === 'USD'
+        ? (displayCurrency as 'USD' | 'PHP' | 'JPY' | 'KRW')
+        : null;
+
+    const approxCurrency =
+      preferredDisplayCurrency && preferredDisplayCurrency !== 'USD'
+        ? preferredDisplayCurrency
+        : null;
+    const persistedRate = Number((order as { fx_rate_usd_to_display?: unknown }).fx_rate_usd_to_display);
+    const usdToApproxRate =
+      approxCurrency && Number.isFinite(persistedRate) && persistedRate > 0
+        ? persistedRate
+        : approxCurrency
+          ? this.getUsdFxRate(approxCurrency)
+          : null;
+
+    const formatMoney = (
+      currency: 'USD' | 'PHP' | 'JPY' | 'KRW',
+      amount: number,
+    ) => {
+      const locale =
+        currency === 'PHP'
+          ? 'en-PH'
+          : currency === 'JPY'
+            ? 'ja-JP'
+            : currency === 'KRW'
+              ? 'ko-KR'
+              : 'en-US';
+      const fractionDigits = currency === 'JPY' || currency === 'KRW' ? 0 : 2;
       return new Intl.NumberFormat(locale, {
         style: 'currency',
         currency,
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
+        minimumFractionDigits: fractionDigits,
+        maximumFractionDigits: fractionDigits,
       }).format(amount);
     };
 
@@ -258,19 +345,32 @@ export class OrdersService {
         const qty = item.quantity;
         const unitPriceUsd = Number(item.product.price);
         const subtotalUsd = Number(item.subtotal);
-        const unitPricePhp = unitPriceUsd * usdToPhpRate;
-        const subtotalPhp = subtotalUsd * usdToPhpRate;
+        const unitPriceApprox =
+          usdToApproxRate && approxCurrency
+            ? unitPriceUsd * usdToApproxRate
+            : null;
+        const subtotalApprox =
+          usdToApproxRate && approxCurrency
+            ? subtotalUsd * usdToApproxRate
+            : null;
+        const approxUnitLine =
+          unitPriceApprox !== null && approxCurrency
+            ? ` (≈ ${escapeHtml(formatMoney(approxCurrency, unitPriceApprox))})`
+            : '';
+        const approxSubtotalLine =
+          subtotalApprox !== null && approxCurrency
+            ? `<br/><span style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.72)">(≈ ${escapeHtml(formatMoney(approxCurrency, subtotalApprox))})</span>`
+            : '';
         return `
           <tr>
             <td style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.08)">
               <div style="font-weight:700;color:#ffffff">${title}</div>
               <div style="font-size:12px;color:rgba(255,255,255,0.72)">
-                Qty: ${qty} &bull; Unit: ${escapeHtml(formatMoney('USD', unitPriceUsd))} (≈ ${escapeHtml(formatMoney('PHP', unitPricePhp))})
+                Qty: ${qty} &bull; Unit: ${escapeHtml(formatMoney('USD', unitPriceUsd))}${approxUnitLine}
               </div>
             </td>
             <td align="right" style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.08);font-weight:700;color:#ffffff">
-              ${escapeHtml(formatMoney('USD', subtotalUsd))}<br/>
-              <span style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.72)">(≈ ${escapeHtml(formatMoney('PHP', subtotalPhp))})</span>
+              ${escapeHtml(formatMoney('USD', subtotalUsd))}${approxSubtotalLine}
             </td>
           </tr>
         `.trim();
@@ -330,8 +430,12 @@ export class OrdersService {
                   <tr>
                     <td style="padding:14px 0;color:rgba(255,255,255,0.72);font-size:12px">Total</td>
                     <td align="right" style="padding:14px 0;color:#ffffff;font-size:16px;font-weight:900">
-                      ${escapeHtml(formatMoney('USD', totalAmount))}<br/>
-                      <span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.72)">(≈ ${escapeHtml(formatMoney('PHP', totalAmount * usdToPhpRate))})</span>
+                      ${escapeHtml(formatMoney('USD', totalAmount))}
+                      ${
+                        usdToApproxRate && approxCurrency
+                          ? `<br/><span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.72)">(≈ ${escapeHtml(formatMoney(approxCurrency, totalAmount * usdToApproxRate))})</span>`
+                          : ''
+                      }
                     </td>
                   </tr>
                 </tbody>
@@ -365,22 +469,18 @@ export class OrdersService {
     });
   }
 
-  private getUsdToPhpRate(): number {
+  private getUsdFxRate(currency: 'PHP' | 'JPY' | 'KRW'): number | null {
     const raw = (process.env.FX_RATES_USD_JSON ?? '').trim();
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as Record<string, unknown>;
-        const php = Number(parsed?.PHP);
-        if (Number.isFinite(php) && php > 0) return php;
-      } catch {
-        // ignore
-      }
+    if (!raw) return null;
+
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const value = Number(parsed?.[currency]);
+      if (Number.isFinite(value) && value > 0) return value;
+      return null;
+    } catch {
+      return null;
     }
-
-    const fallback = Number(process.env.USD_TO_PHP_RATE ?? '0');
-    if (Number.isFinite(fallback) && fallback > 0) return fallback;
-
-    return 55.35;
   }
 
   async findMyOrders(userId: number) {
@@ -566,6 +666,9 @@ export class OrdersService {
     order_date: Date;
     payment_method: string;
     total_amount: unknown;
+    display_currency?: string | null;
+    fx_rate_usd_to_display?: unknown;
+    approx_total_display?: unknown;
     status: string;
     address: {
       address_id: number;
@@ -603,6 +706,17 @@ export class OrdersService {
       order_date: order.order_date,
       payment_method: order.payment_method,
       total_amount: Number(order.total_amount),
+      display_currency: (order.display_currency ?? null) as string | null,
+      fx_rate_usd_to_display:
+        order.fx_rate_usd_to_display === undefined ||
+        order.fx_rate_usd_to_display === null
+          ? null
+          : Number(order.fx_rate_usd_to_display),
+      approx_total_display:
+        order.approx_total_display === undefined ||
+        order.approx_total_display === null
+          ? null
+          : Number(order.approx_total_display),
       status: order.status,
       address: {
         address_id: order.address.address_id,

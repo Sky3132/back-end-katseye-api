@@ -42,4 +42,11 @@ export class CheckoutOrderDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   shipping_fee?: number;
+
+  // Preferred currency for display/approximation in emails/receipts.
+  // Amounts in DB remain stored in USD unless your frontend/store logic differs.
+  @IsOptional()
+  @IsString()
+  @IsIn(['USD', 'PHP', 'JPY', 'KRW'])
+  display_currency?: 'USD' | 'PHP' | 'JPY' | 'KRW';
 }
