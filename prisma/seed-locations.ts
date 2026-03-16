@@ -229,6 +229,36 @@ export async function seedLocations(prisma: PrismaClient) {
 
     await seedPlacesFromDataset(prisma, fullPhDataset);
 
+    // Remove older sample PH ids (PH-REG-*, PH-PROV-*, PH-CITY-*, PH-DIST-*) so the
+    // frontend doesn't mix the sample hierarchy with the official numeric PSGC ids.
+    await prisma.$executeRaw(
+      Prisma.sql`
+        DELETE FROM \`place\`
+        WHERE \`country_code\`='PH'
+          AND \`id\` LIKE 'PH-%'
+      `,
+    );
+
+    // Any existing user addresses that referenced the sample ids must be cleared,
+    // otherwise updates can fail when we validate parent chains against the new PSGC ids.
+    await prisma.$executeRaw(
+      Prisma.sql`
+        UPDATE \`address\`
+        SET
+          \`region_id\`=NULL,
+          \`province_id\`=NULL,
+          \`city_id\`=NULL,
+          \`district_id\`=NULL
+        WHERE (\`country_code\`='PH' OR \`country_code\` IS NULL)
+          AND (
+            \`region_id\` LIKE 'PH-%' OR
+            \`province_id\` LIKE 'PH-%' OR
+            \`city_id\` LIKE 'PH-%' OR
+            \`district_id\` LIKE 'PH-%'
+          )
+      `,
+    );
+
     // Continue to seed calling codes below (common to both modes).
   } else {
     // id format is arbitrary; only parent_id chain and type must be consistent.

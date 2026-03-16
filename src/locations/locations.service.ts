@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -187,7 +187,9 @@ export class LocationsService {
 
     for (const level of ['region', 'province', 'city', 'district'] as const) {
       if (required.has(level) && !(ids as any)[`${level}_id`]) {
-        throw new Error(`${level}_id is required for country ${countryCode}`);
+        throw new BadRequestException(
+          `${level}_id is required for country ${countryCode}`,
+        );
       }
     }
 
@@ -195,7 +197,9 @@ export class LocationsService {
       where: { type: 'country', id: countryCode, country_code: countryCode },
       select: { id: true, name: true },
     });
-    if (!countryPlace) throw new Error(`Unknown country_code: ${countryCode}`);
+    if (!countryPlace) {
+      throw new BadRequestException(`Unknown country_code: ${countryCode}`);
+    }
 
     const toFetch = Object.values(ids).filter(Boolean) as string[];
     const places = toFetch.length
@@ -216,13 +220,25 @@ export class LocationsService {
     for (const link of chain) {
       if (!link.id) continue;
       const place = byId.get(link.id);
-      if (!place) throw new Error(`Unknown place id: ${link.id}`);
-      if (place.type !== link.type) throw new Error(`Place ${link.id} must be type=${link.type}`);
+      if (!place) {
+        throw new BadRequestException(
+          `Unknown place id: ${link.id} (please re-select your address)`,
+        );
+      }
+      if (place.type !== link.type) {
+        throw new BadRequestException(
+          `Place ${link.id} must be type=${link.type}`,
+        );
+      }
       if (place.country_code !== countryCode) {
-        throw new Error(`Place ${link.id} is not in country_code=${countryCode}`);
+        throw new BadRequestException(
+          `Place ${link.id} is not in country_code=${countryCode}`,
+        );
       }
       if (link.parent && place.parent_id !== link.parent) {
-        throw new Error(`Place ${link.id} is not a child of ${link.parent}`);
+        throw new BadRequestException(
+          `Place ${link.id} is not a child of ${link.parent}`,
+        );
       }
     }
 
