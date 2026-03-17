@@ -92,20 +92,39 @@ export class AddressService {
         throw new ForbiddenException('You do not have access to this address.');
       }
 
+      const existingCountry = String(existing.country_code ?? '')
+        .trim()
+        .toUpperCase();
+      const nextCountry = String(dto.country_code ?? existing.country_code ?? 'PH')
+        .trim()
+        .toUpperCase();
+      const countryChanged =
+        dto.country_code !== undefined && existingCountry !== nextCountry;
+
       const countryCode2 = dto.country_code ?? existing.country_code ?? null;
 
+      const nextIds = {
+        region_id: dto.region_id ?? (countryChanged ? null : existing.region_id ?? null),
+        province_id:
+          dto.province_id ?? (countryChanged ? null : existing.province_id ?? null),
+        city_id: dto.city_id ?? (countryChanged ? null : existing.city_id ?? null),
+        district_id:
+          dto.district_id ?? (countryChanged ? null : existing.district_id ?? null),
+      };
+
       const snapshot =
-        dto.country_code ||
-        dto.region_id ||
-        dto.province_id ||
-        dto.city_id ||
-        dto.district_id
+        countryChanged ||
+        dto.country_code !== undefined ||
+        dto.region_id !== undefined ||
+        dto.province_id !== undefined ||
+        dto.city_id !== undefined ||
+        dto.district_id !== undefined
           ? await this.locations.resolveAddressSnapshot(undefined, {
               country_code: dto.country_code ?? existing.country_code ?? 'PH',
-              region_id: dto.region_id ?? existing.region_id ?? null,
-              province_id: dto.province_id ?? existing.province_id ?? null,
-              city_id: dto.city_id ?? existing.city_id ?? null,
-              district_id: dto.district_id ?? existing.district_id ?? null,
+              region_id: nextIds.region_id,
+              province_id: nextIds.province_id,
+              city_id: nextIds.city_id,
+              district_id: nextIds.district_id,
             })
           : null;
 
@@ -135,10 +154,10 @@ export class AddressService {
           zip_code: dto.zip_code,
 
           country_code: dto.country_code,
-          region_id: dto.region_id,
-          province_id: dto.province_id,
-          city_id: dto.city_id,
-          district_id: dto.district_id,
+          region_id: countryChanged ? dto.region_id ?? null : dto.region_id,
+          province_id: countryChanged ? dto.province_id ?? null : dto.province_id,
+          city_id: countryChanged ? dto.city_id ?? null : dto.city_id,
+          district_id: countryChanged ? dto.district_id ?? null : dto.district_id,
 
           country: snapshot?.country_name ?? dto.country,
           region: snapshot?.region_name ?? dto.region,
