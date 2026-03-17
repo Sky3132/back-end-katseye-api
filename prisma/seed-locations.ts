@@ -57,8 +57,10 @@ function safePlacesDataset(value: unknown): SeedPlaceRow[] | null {
       typeof row?.country_code === 'string' ? row.country_code.trim().toUpperCase() : '';
     const name = typeof row?.name === 'string' ? row.name.trim() : '';
 
-    if (!id || !parent_id || !name || country_code !== 'PH') continue;
+    if (!id || !name || country_code !== 'PH') continue;
     if (!['country', 'region', 'province', 'city', 'district'].includes(type)) continue;
+    // Allow the PH root row to have an empty parent_id; other rows must have one.
+    if (!parent_id && !(type === 'country' && id === 'PH')) continue;
 
     out.push({
       id,
@@ -108,9 +110,10 @@ async function seedPlacesFromDataset(prisma: PrismaClient, rows: SeedPlaceRow[])
     const typed = rows.filter((r) => r.type === t);
     for (let i = 0; i < typed.length; i += chunkSize) {
       const chunk = typed.slice(i, i + chunkSize);
-      const values = chunk.map((r) =>
-        Prisma.sql`(${r.id}, ${r.type}, ${r.parent_id}, ${r.country_code}, ${r.name}, ${r.code ?? null}, ${toBool01(r.has_children)}, ${toIntOrNull(r.sort_order) ?? 0})`,
-      );
+      const values = chunk.map((r) => {
+        const parentId = r.parent_id?.trim() ? r.parent_id.trim() : null;
+        return Prisma.sql`(${r.id}, ${r.type}, ${parentId}, ${r.country_code}, ${r.name}, ${r.code ?? null}, ${toBool01(r.has_children)}, ${toIntOrNull(r.sort_order) ?? 0})`;
+      });
 
       // Note: on MariaDB, `id` is primary key; this keeps the seed idempotent.
       await prisma.$executeRaw(
